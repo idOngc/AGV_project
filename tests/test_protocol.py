@@ -46,7 +46,7 @@ def test_unpack_two_packets_concat():
 
 
 def test_unpack_partial_packet():
-    """包被切一半 —— 应返回空列表 + 原始剩余 buffer，等后续拼接。"""
+    """包被切一半 —— 应返回空列表 + 原始剩余 buffer,等后续拼接。"""
     full = AGVProtocol.pack(99, 3001, {"x": "data"})
     partial = full[:-3]
     packets, remaining = AGVProtocol.unpack(partial)
@@ -55,7 +55,7 @@ def test_unpack_partial_packet():
 
 
 def test_unpack_garbage_then_valid():
-    """剩 buffer 前面带业务无关的垃圾字节，应被丢弃并对齐到 START_BYTE。"""
+    """剩 buffer 前面带业务无关的垃圾字节,应被丢弃并对齐到 START_BYTE。"""
     valid = AGVProtocol.pack(10, 4001, {"k": "v"})
     garbage = b"\x00\x11\x22\x33" + valid
     packets, remaining = AGVProtocol.unpack(garbage)
@@ -65,7 +65,7 @@ def test_unpack_garbage_then_valid():
 
 
 def test_unpack_oversized_body_len_resyncs():
-    """伪造一个 body_len 超过上限的伪起始符，不能冻住解析器。"""
+    """伪造一个 body_len 超过上限的伪起始符,不能冻住解析器。"""
     import struct
 
     fake_header = struct.pack(

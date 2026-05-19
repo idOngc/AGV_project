@@ -1,5 +1,5 @@
 """
-AGV 设备表 —— 对齐《AGV 数据结构》文档里的 AGV 定义，最小版只保留表达
+AGV 设备表 —— 对齐《AGV 数据结构》文档里的 AGV 定义,最小版只保留表达
 连接所需的字段。跳车 / 充电 / 拼单 阈值等后续再添。
 """
 
@@ -31,7 +31,7 @@ class AGV(Model):
     vendor_type = fields.CharField(max_length=32, default="seer_amb", description="厂商型号")
 
     ip = fields.CharField(max_length=64)
-    # 仙工 Robokit 端口表（与 connectors.seer.constants.SeerPort 一致）。
+    # 仙工 Robokit 端口表(与 connectors.seer.constants.SeerPort 一致)。
     # 字段命名采用官方 API_PORT_STATE / CTRL / TASK / CONFIG / OTHER。
     port_state = fields.IntField(default=19204, description="状态查询 (1000-1999)")
     port_ctrl = fields.IntField(default=19205, description="控制 (2000-2999)")

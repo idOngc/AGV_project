@@ -1,7 +1,7 @@
 """
 任务表 —— 最小版只记录「下发过什么 / 状态 / 哪台车」。
 
-后续会拆出 Task / TaskStep 两表，对齐文档中的 taskTemplate.steps[]。
+后续会拆出 Task / TaskStep 两表,对齐文档中的 taskTemplate.steps[]。
 """
 
 from enum import IntEnum
@@ -19,7 +19,7 @@ class TaskStatus(IntEnum):
 
 
 class TaskType(IntEnum):
-    """最小版先用三种，后续补齐文档里的拖隶/控制等。"""
+    """最小版先用三种,后续补齐文档里的拖隶/控制等。"""
     NAVIGATE = 1        # 纯导航
     JACK_LOAD = 2       # 顶升取货
     JACK_UNLOAD = 3     # 顶升放货

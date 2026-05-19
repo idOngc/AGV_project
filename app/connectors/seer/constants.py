@@ -1,21 +1,21 @@
 """
 仙工 (SEER) Robokit 网络协议常量表。
 
-数据来源：仙工官方仓库 (仅供参考，后续以《Robokit Netprotocol》文档为准):
+数据来源：仙工官方仓库 (仅供参考,后续以《Robokit Netprotocol》文档为准):
     https://github.com/seer-robotics/Robokit_TCP_API_py
     https://github.com/seer-robotics/robokit_netprotocol_l   (中文详细手册)
 
-协议报文头（与 `protocol.py` 中 `HEADER_FMT` 一致）:
+协议报文头(与 `protocol.py` 中 `HEADER_FMT` 一致):
     | 0x5A | 版本(1B) | 请求ID(2B,BE) | JSON长度(4B,BE) | 消息类型(2B,BE) | 保留位(6B) |
     后接 `jsonLen` 字节 UTF-8 JSON 数据体
 
 端口 ↔ API 号段路由规则:
-    1000-1999  → 19204（状态端口）   状态查询
-    2000-2999  → 19205（控制端口）   控制命令
-    3000-3999  → 19206（任务端口）   任务 / 导航
-    4000-5999  → 19207（配置端口）   配置管理
-    5100-5199  → 19208（内核端口）   守护进程文件传输（ls/scp/rm）
-    6000-6998  → 19210（其他端口）   杂项（DO/IO 等）
+    1000-1999  → 19204(状态端口)   状态查询
+    2000-2999  → 19205(控制端口)   控制命令
+    3000-3999  → 19206(任务端口)   任务 / 导航
+    4000-5999  → 19207(配置端口)   配置管理
+    5100-5199  → 19208(内核端口)   守护进程文件传输(ls/scp/rm)
+    6000-6998  → 19210(其他端口)   杂项(DO/IO 等)
 """
 
 from __future__ import annotations
@@ -38,7 +38,7 @@ class SeerPort(IntEnum):
 
 # ────────────────────── msg_type 常用 API 号 ──────────────────────
 # 这里仅列实际在官方 Python 示例 里出现过 / 被明确点名的 API 号。
-# 后续需要哪个再加哪个，不一次性加一堆报文里从未用过的。
+# 后续需要哪个再加哪个,不一次性加一堆报文里从未用过的。
 
 class StateMsg(IntEnum):
     """状态查询 (端口 19204)。"""
@@ -47,7 +47,7 @@ class StateMsg(IntEnum):
     MODE_REQ = 1003        # 当前模式 (手动 / 自动)
     LOC_REQ = 1004         # 位姿 (x, y, angle, current_station ...)
     SPEED_REQ = 1005       # 速度 (vx, vy, w)
-    BATTERY_REQ = 1007     # 电量 (battery_level 等，可附 {"simple": true})
+    BATTERY_REQ = 1007     # 电量 (battery_level 等,可附 {"simple": true})
     AREA_REQ = 1011        # 区域信息
     IO_RES = 1013          # IO 上报
     TASK_REQ = 1020        # 当前任务状态
@@ -67,7 +67,7 @@ class TaskMsg(IntEnum):
 
 
 class KernelMsg(IntEnum):
-    """守护进程 (端口 19208)。用于调试 / 运维，业务侧一般不直接调用。"""
+    """守护进程 (端口 19208)。用于调试 / 运维,业务侧一般不直接调用。"""
     DAEMON_LS_REQ = 5100
     DAEMON_SCP_REQ = 5101
     DAEMON_RM_REQ = 5102
@@ -84,7 +84,7 @@ def port_for(msg_type: int) -> SeerPort:
     """
     根据 msg_type 返回应该走哪个端口。
 
-    这个函数是连接层路由的唯一权威来源，上层不关心连接哪个 socket。
+    这个函数是连接层路由的唯一权威来源,上层不关心连接哪个 socket。
 
     >>> port_for(1004)
     <SeerPort.STATE: 19204>

@@ -1,7 +1,7 @@
 """
 用户 / 角色 最简模型：admin / operator 两种角色。
 
-表设计故意设为平面，不上 casbin / 多表权限，后期有需要再演进。
+表设计故意设为平面,不上 casbin / 多表权限,后期有需要再演进。
 """
 
 from enum import Enum

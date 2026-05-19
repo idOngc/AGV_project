@@ -1,5 +1,5 @@
 """
-FastAPI 依赖注入集中处。现在先放占位，后续添加:
+FastAPI 依赖注入集中处。现在先放占位,后续添加:
   - get_current_user
   - require_admin
   - get_agv_manager

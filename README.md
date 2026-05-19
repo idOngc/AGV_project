@@ -1,6 +1,6 @@
 # AGV 调度系统 (AGV Scheduler)
 
-工厂级 AGV 调度后端，基于 **FastAPI + Tortoise-ORM + MySQL**，通过 TCP 协议
+工厂级 AGV 调度后端,基于 **FastAPI + Tortoise-ORM + MySQL**,通过 TCP 协议
 对接仙工 (SEER) 控制器。Redis 预留接口但**当前阶段未启用**。
 
 ## 仙工 (SEER) 官方资料
@@ -44,16 +44,16 @@
 6000-6998  →  19210 (OTHER)    杂项 (DO/IO 等)
 ```
 
-> ⚠️ 连接层路由由 `connectors.seer.constants.port_for(msg_type)` 统一裁决，
+> ⚠️ 连接层路由由 `connectors.seer.constants.port_for(msg_type)` 统一裁决,
 > 上层不要硬编码端口号。
 
 ## 关键约束 (始终遵守)
 
 1. **硬件细节只允许出现在 `app/connectors/`** —— 字节、msg_type、socket、modbus 等。
    向上只暴露语义化方法 (`navigate()`, `get_status()`, `cancel_task()`)。
-2. `app/services/` 只编排业务流程，不直接 carry 字节。
-3. `app/scheduler/` 做全局决策，输出"派给谁"，由 services 调 connectors 落地。
-4. **配置/历史落 MySQL**；实时状态目前也走 MySQL，后续接入 Redis 时再切。
+2. `app/services/` 只编排业务流程,不直接 carry 字节。
+3. `app/scheduler/` 做全局决策,输出"派给谁",由 services 调 connectors 落地。
+4. **配置/历史落 MySQL**；实时状态目前也走 MySQL,后续接入 Redis 时再切。
 5. 一台 AGV 多个长连接 (按端口) + 每条连接一个 `asyncio.Task` 收包；
    `req_id → Future` 字典做请求/响应配对。
 
@@ -73,7 +73,7 @@ app/
 │   ├── seer/            仙工 AGV (TCP)
 │   ├── plc/             PLC (占位)
 │   └── charger/         充电桩 (占位)
-├── workers/             后台 asyncio (心跳轮询等，占位)
+├── workers/             后台 asyncio (心跳轮询等,占位)
 ├── ws/                  WebSocket 推送 (占位)
 └── utils/               通用工具/异常
 ```

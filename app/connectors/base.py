@@ -1,7 +1,7 @@
 """
-连接器抽象基类 —— 为后续多厂商（仙工 / 其他）统一接口。
+连接器抽象基类 —— 为后续多厂商(仙工 / 其他)统一接口。
 
-只定义语义层方法名，不关心具体实现。上层只依赖这个抽象，不直接依赖子类。
+只定义语义层方法名,不关心具体实现。上层只依赖这个抽象,不直接依赖子类。
 """
 
 from __future__ import annotations
@@ -24,7 +24,7 @@ class AGVConnector(ABC):
 
     @abstractmethod
     async def navigate(self, target_point: str, **kwargs: Any) -> dict[str, Any]:
-        """下发导航任务，返回 AGV 响应数据。"""
+        """下发导航任务,返回 AGV 响应数据。"""
 
     @abstractmethod
     async def cancel_task(self) -> dict[str, Any]:

@@ -3,5 +3,5 @@
 
 拟发存任务:
   - status_poller.py   轮询 AGV 状态 (心跳 + 1Hz 位姿)
-  - task_monitor.py    轮询任务进度，状态流转
+  - task_monitor.py    轮询任务进度,状态流转
 """

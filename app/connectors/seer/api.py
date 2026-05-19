@@ -1,7 +1,7 @@
 """
 仙工 AGV 高层语义封装 —— 下一步实现。
 
-这个文件是「连接层对上暴露的唯一出口」。上层 (services) 只调 SeerAPI，
+这个文件是「连接层对上暴露的唯一出口」。上层 (services) 只调 SeerAPI,
 不调 SeerTcpClient。
 
 例如:

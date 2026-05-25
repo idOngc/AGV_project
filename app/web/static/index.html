@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统 · 登录</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body class="centered">
+    <form id="loginForm" class="card" autocomplete="on">
+        <h1>AGV 调度系统</h1>
+
+        <label>用户名
+            <input type="text" id="username" required autocomplete="username" autofocus>
+        </label>
+
+        <label>密码
+            <input type="password" id="password" required autocomplete="current-password">
+        </label>
+
+        <button type="submit" class="block" id="submitBtn">登录</button>
+
+        <div id="error" class="error"></div>
+
+        <p class="muted" style="margin-top: 16px; text-align: center;">
+            后端接口: <code>/api/v1/auth/login</code>
+        </p>
+    </form>
+
+    <script>
+        // 如果已经登录过,直接跳到控制台
+        if (localStorage.getItem("token")) {
+            window.location.replace("dashboard.html");
+        }
+
+        const form = document.getElementById("loginForm");
+        const errEl = document.getElementById("error");
+        const submitBtn = document.getElementById("submitBtn");
+
+        form.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            errEl.textContent = "";
+            submitBtn.disabled = true;
+            submitBtn.textContent = "登录中...";
+
+            const username = document.getElementById("username").value.trim();
+            const password = document.getElementById("password").value;
+
+            try {
+                const resp = await fetch("/api/v1/auth/login", {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ username, password })
+                });
+                const data = await resp.json();
+                if (!resp.ok) {
+                    throw new Error(data.msg || data.detail || `登录失败 (${resp.status})`);
+                }
+                // 把 token 和用户信息存到 localStorage,跳转到控制台
+                localStorage.setItem("token", data.access_token);
+                localStorage.setItem("user", JSON.stringify(data.user));
+                window.location.replace("dashboard.html");
+            } catch (err) {
+                errEl.textContent = err.message;
+                submitBtn.disabled = false;
+                submitBtn.textContent = "登录";
+            }
+        });
+    </script>
+</body>
+</html>

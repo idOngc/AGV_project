@@ -31,7 +31,7 @@ class SeerManager:
     # ───────── 句柄获取 ─────────
 
     async def get(self, agv: AGV) -> SeerAPI:
-        """根据 AGV 行返回 SeerAPI；不存在则创建。"""
+        """根据 AGV 行返回 SeerAPI;不存在则创建。"""
         key = agv.uuid
         existing = self._pool.get(key)
         if existing is not None:

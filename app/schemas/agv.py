@@ -12,12 +12,12 @@ class AGVCreateIn(BaseModel):
 
     uuid: str = Field(..., min_length=1, max_length=64, description="全局唯一 ID,业务上推荐用机器人 SN")
     name: str = Field(..., min_length=1, max_length=64, description="显示名,如 LPT-AGV-J01")
-    ip: IPvAnyAddress = Field(..., description="AGV 的 IPv4/IPv6 地址")
+    ip: IPvAnyAddress = Field(..., description="AGV 的 IPv4 地址")
     mode: AGVMode = AGVMode.JACK
     protocol: AGVProtocolType = AGVProtocolType.TCP_IP
     vendor_type: str = Field("seer_amb", max_length=32)
 
-    # 端口可全用默认值；只在客户改过 AGV 设置时才需要传
+    # 端口可全用默认值;只在客户改过 AGV 设置时才需要传
     port_state: int = 19204
     port_ctrl: int = 19205
     port_task: int = 19206

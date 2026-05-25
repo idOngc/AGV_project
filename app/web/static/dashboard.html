@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统 · 控制台</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <!-- 顶栏 -->
+    <header class="topbar">
+        <h1>AGV 调度系统 · 控制台</h1>
+        <div>
+            <span class="user" id="userInfo"></span>
+            <button class="ghost" id="logoutBtn">退出</button>
+        </div>
+    </header>
+
+    <main>
+        <!-- 工具栏 -->
+        <div class="toolbar">
+            <h2>已注册 AGV</h2>
+            <button class="secondary" id="refreshBtn">刷新</button>
+            <button class="secondary" id="pingAllBtn" title="对所有启用的 AGV 测一次通信">全部测连接</button>
+            <button id="addBtn">新增 AGV</button>
+        </div>
+
+        <!-- 表格 -->
+        <table id="agvTable">
+            <thead>
+                <tr>
+                    <th>UUID</th>
+                    <th>名称</th>
+                    <th>IP</th>
+                    <th>类型</th>
+                    <th>启用</th>
+                    <th>连接</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody>
+                <!-- 由 JS 动态填充 -->
+            </tbody>
+        </table>
+        <p class="muted" style="margin-top: 8px;" id="emptyHint"></p>
+    </main>
+
+    <!-- 新增 AGV 弹窗 -->
+    <div class="modal-mask hidden" id="addModal">
+        <form class="modal" id="addForm">
+            <h3>新增 AGV</h3>
+            <label>UUID(唯一标识,推荐用机器人 SN)
+                <input type="text" id="newUuid" required maxlength="64">
+            </label>
+            <label>显示名
+                <input type="text" id="newName" required maxlength="64">
+            </label>
+            <label>IP 地址
+                <input type="text" id="newIp" required placeholder="192.168.1.100">
+            </label>
+            <label>车型
+                <select id="newMode">
+                    <option value="1">叉车</option>
+                    <option value="2" selected>顶升车</option>
+                    <option value="3">拖车</option>
+                    <option value="4">翻转车</option>
+                </select>
+            </label>
+            <p class="muted">端口(默认值符合仙工 Robokit 标准,一般不用改)</p>
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label>状态端口 <input type="number" id="newPortState" value="19204"></label>
+                <label>控制端口 <input type="number" id="newPortCtrl"  value="19205"></label>
+                <label>任务端口 <input type="number" id="newPortTask"  value="19206"></label>
+                <label>配置端口 <input type="number" id="newPortConfig" value="19207"></label>
+                <label>杂项端口 <input type="number" id="newPortOther" value="19210"></label>
+            </div>
+            <div id="addError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="addModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- 实时状态弹窗 -->
+    <div class="modal-mask hidden" id="statusModal">
+        <div class="modal">
+            <h3 id="statusTitle">AGV 实时状态</h3>
+            <pre id="statusBody">加载中...</pre>
+            <div class="modal-actions">
+                <button class="secondary" id="statusRefreshBtn">再查一次</button>
+                <button type="button" class="ghost" data-close="statusModal">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // ─── 基础 API 客户端 ────────────────────────────────────────
+        const token = localStorage.getItem("token");
+        const user = JSON.parse(localStorage.getItem("user") || "null");
+
+        if (!token || !user) {
+            window.location.replace("index.html");
+        }
+
+        document.getElementById("userInfo").textContent =
+            `${user.username} (${user.role})`;
+
+        async function api(method, path, body) {
+            const opts = {
+                method,
+                headers: {
+                    "Authorization": "Bearer " + token,
+                    "Content-Type": "application/json"
+                }
+            };
+            if (body !== undefined) opts.body = JSON.stringify(body);
+            const resp = await fetch(path, opts);
+
+            // 401 -> token 失效,踢回登录页
+            if (resp.status === 401) {
+                localStorage.clear();
+                alert("会话已失效,请重新登录");
+                window.location.replace("index.html");
+                throw new Error("401");
+            }
+
+            const text = await resp.text();
+            const data = text ? JSON.parse(text) : null;
+            if (!resp.ok) {
+                throw new Error((data && (data.msg || data.detail)) || `${resp.status} ${resp.statusText}`);
+            }
+            return data;
+        }
+
+        // ─── 弹窗工具 ────────────────────────────────────────────────
+        function showModal(id) { document.getElementById(id).classList.remove("hidden"); }
+        function hideModal(id) { document.getElementById(id).classList.add("hidden"); }
+        document.querySelectorAll("[data-close]").forEach(btn => {
+            btn.addEventListener("click", () => hideModal(btn.dataset.close));
+        });
+
+        // ─── 退出 ─────────────────────────────────────────────────
+        document.getElementById("logoutBtn").addEventListener("click", () => {
+            localStorage.clear();
+            window.location.replace("index.html");
+        });
+
+        // ─── AGV 列表加载 ───────────────────────────────────────────
+        const MODE_NAMES = { 1: "叉车", 2: "顶升车", 3: "拖车", 4: "翻转车" };
+        let cachedAgvs = [];
+
+        async function loadAgvs() {
+            const tbody = document.querySelector("#agvTable tbody");
+            tbody.innerHTML = `<tr><td colspan="7" class="muted">加载中...</td></tr>`;
+            try {
+                cachedAgvs = await api("GET", "/api/v1/agvs");
+                renderTable();
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        function renderTable() {
+            const tbody = document.querySelector("#agvTable tbody");
+            const hint = document.getElementById("emptyHint");
+            if (cachedAgvs.length === 0) {
+                tbody.innerHTML = "";
+                hint.textContent = '还没有 AGV,点右上"新增 AGV"开始。';
+                return;
+            }
+            hint.textContent = "";
+            tbody.innerHTML = cachedAgvs.map((a, idx) => `
+                <tr data-uuid="${a.uuid}">
+                    <td><code>${a.uuid}</code></td>
+                    <td>${a.name}</td>
+                    <td>${a.ip}</td>
+                    <td>${MODE_NAMES[a.mode] || a.mode}</td>
+                    <td>
+                        <span class="badge ${a.is_active ? "on" : "off"}">
+                            ${a.is_active ? "启用" : "禁用"}
+                        </span>
+                    </td>
+                    <td><span class="badge unknown" data-conn-cell="${idx}">未测</span></td>
+                    <td class="actions">
+                        <button data-act="ping"   data-uuid="${a.uuid}">测通信</button>
+                        <button data-act="status" data-uuid="${a.uuid}" class="secondary">实时状态</button>
+                        ${user.role === "admin" ? `
+                            <button data-act="delete" data-uuid="${a.uuid}" class="danger">删除</button>
+                        ` : ""}
+                    </td>
+                </tr>
+            `).join("");
+        }
+
+        // ─── 行内动作 ────────────────────────────────────────────
+        document.querySelector("#agvTable").addEventListener("click", async (e) => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const uuid = btn.dataset.uuid;
+            const act = btn.dataset.act;
+
+            if (act === "ping") {
+                await pingOne(uuid, btn);
+            } else if (act === "status") {
+                await showStatus(uuid);
+            } else if (act === "delete") {
+                if (!confirm(`确认删除 AGV ${uuid}？(默认软删,可在数据库恢复)`)) return;
+                try {
+                    await api("DELETE", `/api/v1/agvs/${uuid}`);
+                    await loadAgvs();
+                } catch (e) { alert(e.message); }
+            }
+        });
+
+        async function pingOne(uuid, btnEl) {
+            const row = document.querySelector(`tr[data-uuid="${uuid}"]`);
+            const connCell = row.querySelector("[data-conn-cell]");
+            if (btnEl) { btnEl.disabled = true; btnEl.textContent = "测试中..."; }
+            connCell.className = "badge unknown";
+            connCell.textContent = "测试中";
+            try {
+                const res = await api("POST", `/api/v1/agvs/${uuid}/ping`);
+                if (res.ok) {
+                    connCell.className = "badge on";
+                    connCell.textContent = `在线 ${res.latency_ms}ms`;
+                } else {
+                    connCell.className = "badge off";
+                    connCell.textContent = res.reason || "失败";
+                    connCell.title = res.error || "";
+                }
+            } catch (e) {
+                connCell.className = "badge off";
+                connCell.textContent = "错误";
+                connCell.title = e.message;
+            } finally {
+                if (btnEl) { btnEl.disabled = false; btnEl.textContent = "测通信"; }
+            }
+        }
+
+        document.getElementById("pingAllBtn").addEventListener("click", async () => {
+            const tasks = cachedAgvs
+                .filter(a => a.is_active)
+                .map(a => pingOne(a.uuid, null));
+            await Promise.all(tasks);
+        });
+
+        async function showStatus(uuid) {
+            document.getElementById("statusTitle").textContent = `AGV 实时状态 · ${uuid}`;
+            const body = document.getElementById("statusBody");
+            body.textContent = "加载中...";
+            showModal("statusModal");
+            document.getElementById("statusRefreshBtn").onclick = () => showStatus(uuid);
+            try {
+                const data = await api("GET", `/api/v1/agvs/${uuid}/status`);
+                body.textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                body.textContent = "查询失败: " + e.message;
+            }
+        }
+
+        // ─── 新增 AGV ────────────────────────────────────────────
+        document.getElementById("addBtn").addEventListener("click", () => {
+            if (user.role !== "admin") {
+                alert("只有 admin 角色能新增 AGV");
+                return;
+            }
+            document.getElementById("addForm").reset();
+            document.getElementById("addError").textContent = "";
+            showModal("addModal");
+        });
+
+        document.getElementById("addForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const errEl = document.getElementById("addError");
+            errEl.textContent = "";
+            const payload = {
+                uuid: document.getElementById("newUuid").value.trim(),
+                name: document.getElementById("newName").value.trim(),
+                ip:   document.getElementById("newIp").value.trim(),
+                mode: parseInt(document.getElementById("newMode").value, 10),
+                port_state:  parseInt(document.getElementById("newPortState").value, 10),
+                port_ctrl:   parseInt(document.getElementById("newPortCtrl").value, 10),
+                port_task:   parseInt(document.getElementById("newPortTask").value, 10),
+                port_config: parseInt(document.getElementById("newPortConfig").value, 10),
+                port_other:  parseInt(document.getElementById("newPortOther").value, 10),
+            };
+            try {
+                await api("POST", "/api/v1/agvs", payload);
+                hideModal("addModal");
+                await loadAgvs();
+            } catch (err) {
+                errEl.textContent = err.message;
+            }
+        });
+
+        // ─── 刷新按钮 + 首次加载 ────────────────────────────────
+        document.getElementById("refreshBtn").addEventListener("click", loadAgvs);
+        loadAgvs();
+    </script>
+</body>
+</html>

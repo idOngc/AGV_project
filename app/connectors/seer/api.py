@@ -16,7 +16,7 @@
   - cancel_task()         取消任务  (注: msg_type 待官方确认; 暂未启用)
   - close()               关闭所有连接
 
-字段名以仙工官方为准；不确定的字段我会标 `// TODO: 字段名待确认`。
+字段名以仙工官方为准;不确定的字段我会标 `// TODO: 字段名待确认`。
 """
 
 from __future__ import annotations
@@ -51,7 +51,7 @@ class SeerAPI(AGVConnector):
     """
     一台 AGV 的完整 API 封装。
 
-    构造时不立即连接(懒连接)；调用业务方法时自动连接对应端口。
+    构造时不立即连接(懒连接);调用业务方法时自动连接对应端口。
     """
 
     def __init__(
@@ -183,7 +183,7 @@ class SeerAPI(AGVConnector):
     async def navigate(self, target_point: str, **kwargs: Any) -> dict[str, Any]:
         """
         下发去某个站点。msg_type=3051 GOTARGET_REQ。
-        body 至少要带 id (目标站点名)；task_id 不传仙工会自己生成。
+        body 至少要带 id (目标站点名);task_id 不传仙工会自己生成。
         """
         body: dict[str, Any] = {"id": target_point, "task_id": str(uuid_lib.uuid4())}
         body.update(kwargs)

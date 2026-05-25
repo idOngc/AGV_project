@@ -11,7 +11,7 @@
 | <https://seer-group.feishu.cn/wiki/space/7349729939798720540> | 飞书 wiki (需账号登录) |
 | <https://cn.seer-group.com/help-center> | 仙工帮助中心 |
 
-`app/connectors/seer/constants.py` 里的端口表与 msg_type 表已**严格按上述官方源**填好；
+`app/connectors/seer/constants.py` 里的端口表与 msg_type 表已**严格按上述官方源**填好;
 有新的报文需要时按 API 号段加进去即可。
 
 ## 总体分层
@@ -53,8 +53,8 @@
    向上只暴露语义化方法 (`navigate()`, `get_status()`, `cancel_task()`)。
 2. `app/services/` 只编排业务流程,不直接 carry 字节。
 3. `app/scheduler/` 做全局决策,输出"派给谁",由 services 调 connectors 落地。
-4. **配置/历史落 MySQL**；实时状态目前也走 MySQL,后续接入 Redis 时再切。
-5. 一台 AGV 多个长连接 (按端口) + 每条连接一个 `asyncio.Task` 收包；
+4. **配置/历史落 MySQL**;实时状态目前也走 MySQL,后续接入 Redis 时再切。
+5. 一台 AGV 多个长连接 (按端口) + 每条连接一个 `asyncio.Task` 收包;
    `req_id → Future` 字典做请求/响应配对。
 
 ## 目录速览
@@ -108,12 +108,35 @@ python -m scripts.seed_users
 #   python -m scripts.seed_users --reset
 
 # 6. 启动开发服务
-uvicorn app.main:app --reload --host 0.0.0.0 --port 8000
+uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 # 浏览器打开:
-#   http://localhost:8000/docs    Swagger UI (有 Authorize 按钮可填 Bearer token)
-#   http://localhost:8000/health  健康检查
+#   http://localhost:8000/          自动跳到内置临时控制台 (登录页)
+#   http://localhost:8000/web/      内置临时控制台 (登录 / AGV CRUD / 测通信 / 实时状态)
+#   http://localhost:8000/docs      Swagger UI
+#   http://localhost:8000/health    健康检查
 ```
+
+## 内置临时控制台 `/web/`
+
+只是为了在 Vue 接入前快速验证后端功能,**Vue 上线后会整体替换掉 `app/web/`**。
+
+- 登录页 (`/web/`) → 用 `admin / admin123` 或 `operator / op123` 登录。
+- 控制台 (`/web/dashboard.html`):
+  - admin 可以「新增 / 删除 AGV」;operator 只能看 + 测通信。
+  - 每行「测通信」按钮调 `POST /api/v1/agvs/{uuid}/ping`,在线时显示延迟。
+  - 「实时状态」按钮调 `GET /api/v1/agvs/{uuid}/status`,弹窗里展示 JSON 快照。
+  - 「全部测连接」会并发对所有启用的 AGV 各发一次 ping。
+- token 存在浏览器 `localStorage.token` 里;401 时自动踢回登录页。
+
+## 在 Swagger 上测带鉴权的接口
+
+后端用了 `HTTPBearer` 安全方案,所以 Swagger UI 右上角会有一个绿色 **Authorize** 按钮。
+
+1. 先调 `POST /api/v1/auth/login` 拿到 `access_token` (响应 body 里直接复制)。
+2. 点右上 **Authorize** 按钮,把 token 粘进去 —— **只填 token 本身,不要加 `Bearer ` 前缀**,Swagger 会自动拼。
+3. 之后所有受保护接口都会自动带上 `Authorization: Bearer <token>`,不用每次手填 header。
+4. 退出登录就点 **Logout** 或者直接关掉浏览器。
 
 ## API 速览
 
@@ -186,10 +209,11 @@ curl http://localhost:8000/api/v1/agvs/AGV-001/status \
 - [x] 登录 / JWT / RBAC (admin & operator)
 - [x] AGV 增删改查 + `/ping` 测通信 + `/status` 实时状态
 - [x] 协议层 + 客户端集成测试 (10/10 通过)
+- [x] 内置临时控制台 (`/web/`) — 登录 + AGV 列表 + 测通信 + 实时状态
 - [ ] 任务下发接口 `POST /api/v1/tasks` (实装中)
 - [ ] WebSocket 实时状态推送
 - [ ] 调度层 (派车 / 交管 / 自动充电)
-- [ ] 前端 Vue
+- [ ] 前端 Vue (会替换掉 `app/web/`)
 
 
 

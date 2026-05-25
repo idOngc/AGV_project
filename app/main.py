@@ -12,9 +12,12 @@ from __future__ import annotations
 
 import logging
 from contextlib import asynccontextmanager
+from pathlib import Path
 from typing import AsyncIterator
 
 from fastapi import FastAPI
+from fastapi.responses import RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from tortoise import Tortoise
 
 from app.api.v1.router import api_router
@@ -62,4 +65,21 @@ app.include_router(api_router)
 @app.get("/health", tags=["meta"], summary="健康检查")
 async def health() -> dict:
     return {"status": "ok", "app": settings.APP_NAME, "env": settings.APP_ENV}
+
+
+# ─── 静态前端(临时页面,将来 Vue 上线后移除) ─────────────────────
+# 挂载顺序很重要:必须在所有 API 路由声明完之后再挂载静态资源,
+# 否则 / 会被 StaticFiles 截走。
+_WEB_DIR = Path(__file__).parent / "web" / "static"
+if _WEB_DIR.is_dir():
+    app.mount(
+        "/web",
+        StaticFiles(directory=str(_WEB_DIR), html=True),
+        name="web",
+    )
+
+    @app.get("/", include_in_schema=False)
+    async def _root_redirect() -> RedirectResponse:
+        """根路径直接跳到登录页,方便浏览器 http://host:port/ 直达。"""
+        return RedirectResponse(url="/web/")
 

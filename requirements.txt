@@ -17,7 +17,8 @@ aerich>=0.7,<1.0                # Tortoise 迁移工具
 
 # --- 安全 ---
 python-jose[cryptography]>=3.3,<4.0
-passlib[bcrypt]>=1.7,<2.0
+passlib[bcrypt]==1.7.4
+bcrypt==4.0.1
 
 # --- 开发与测试 ---
 pytest>=8.0

@@ -20,7 +20,7 @@ def hash_password(plain: str) -> str:
     return _pwd.hash(plain)
 
 
-def verify_password(plain: str, hashed: str) -> bool:
+def verify_password(plain: str, hashed: str) -> bool:  
     return _pwd.verify(plain, hashed)
 
 

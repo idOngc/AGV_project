@@ -2,7 +2,7 @@
 AGV 资源 service 层 —— 只管"这台车的元数据",不管"它在跑什么任务"。
 
 约定:
-  - 业务上以 uuid 为主键；DB id 仅内部使用
+  - 业务上以 uuid 为主键;DB id 仅内部使用
   - 删除走软删除 (is_active=False),硬删走 service.delete_hard()
 """
 

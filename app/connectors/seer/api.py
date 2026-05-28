@@ -1,5 +1,5 @@
 """
-仙工 AGV 高层语义封装 —— 上层(services / endpoints)只调这里,绝不直接碰 client。
+仙工 AGV 高层语义封装 —— 上层(services / endpoints)只调这里
 
 一个 SeerAPI 实例 = 一台 AGV 的完整 5 端口客户端集合 + 业务方法。
 
@@ -13,10 +13,9 @@
   - get_task_state()      当前任务
   - snapshot()            并发拉全部,拼一份对齐《AGV 数据结构》文档的状态结构
   - navigate(target)      下发 GOTARGET (msg_type=3051)
-  - cancel_task()         取消任务  (注: msg_type 待官方确认; 暂未启用)
+  - cancel_task()         取消任务  (暂未启用)
   - close()               关闭所有连接
 
-字段名以仙工官方为准;不确定的字段我会标 `// TODO: 字段名待确认`。
 """
 
 from __future__ import annotations
@@ -77,7 +76,7 @@ class SeerAPI(AGVConnector):
             SeerPort.OTHER: SeerTcpClient(agv_name, ip, port_other, connect_timeout=connect_timeout),
         }
 
-    # ───────── AGVConnector 接口实现 ─────────
+    # AGVConnector 接口实现
 
     async def connect(self) -> None:
         """显式预连接全部端口。失败抛错。一般业务不主动调,依赖懒连接即可。"""
@@ -94,11 +93,11 @@ class SeerAPI(AGVConnector):
         except SeerClientError:
             return False
 
-    # ───────── 业务方法 ─────────
+    # 业务方法
 
     async def ping(self, timeout: float = 3.0) -> dict[str, Any]:
         """
-        测通信 —— 发 INFO_REQ,记录耗时与响应内容。
+        测通信 -- 发 INFO_REQ,记录耗时与响应内容。
         endpoint /agvs/{uuid}/ping 直接用这个。
         """
         start = time.perf_counter()
@@ -122,9 +121,6 @@ class SeerAPI(AGVConnector):
         return (await self._request(StateMsg.INFO_REQ)).body
 
     async def get_battery(self, simple: bool = True) -> dict[str, Any]:
-        """
-        电量。仙工官方示例传 {"simple": true} 拿精简结构。
-        """
         body = {"simple": simple} if simple else None
         return (await self._request(StateMsg.BATTERY_REQ, body=body)).body
 
@@ -159,7 +155,6 @@ class SeerAPI(AGVConnector):
 
         online = all(r["ok"] for r in (info, location, battery))
 
-        # 字段命名贴合《AGV 数据结构》PDF 里 seerAgv 那段
         return {
             "online": online,
             "agv_name": self.agv_name,
@@ -182,25 +177,55 @@ class SeerAPI(AGVConnector):
 
     async def navigate(self, target_point: str, **kwargs: Any) -> dict[str, Any]:
         """
-        下发去某个站点。msg_type=3051 GOTARGET_REQ。
-        body 至少要带 id (目标站点名);task_id 不传仙工会自己生成。
+        路径导航 GOTARGET_REQ (msg_type=3051)。
+
+        必传:
+          - target_point  对应官方 body 里的 "id" (e.g. "AP1" / "LM1")
+        可选 kwargs (透传给仙工):
+          - task_id    任务 ID,不传则自动生成 uuid
+          - source_id  起点站点
+          - angle      到点朝向 (rad),缺省用站点设置
+          - operation  动作: ForkLoad/ForkUnload/RollerLoad/RollerUnload/
+                       JackLoad/JackUnload/JackHeight/HookLoad/HookUnload
+          - 其它 仙工 3051 接受的字段 (script_args 等)
+
+        返回仙工原始响应体 (一般 {"ret_code": 0, ...})。
         """
-        body: dict[str, Any] = {"id": target_point, "task_id": str(uuid_lib.uuid4())}
-        body.update(kwargs)
+        body: dict[str, Any] = {"id": target_point}
+        body.setdefault("task_id", str(uuid_lib.uuid4()))
+        for k, v in kwargs.items():
+            if v is not None:
+                body[k] = v
         return (await self._request(TaskMsg.GOTARGET_REQ, body=body)).body
 
+    async def dispatch_task(self, body: dict[str, Any]) -> dict[str, Any]:
+        """
+        和 navigate 等价的低层入口 —— 直接接受完整 body 字典,
+        给上层 service 复用 (避免在 service 那边再 build body 一次)。
+        body 必须含 "id" (目标点)。
+        """
+        if "id" not in body:
+            raise ValueError("dispatch_task body must contain 'id'")
+        body.setdefault("task_id", str(uuid_lib.uuid4()))
+        return (await self._request(TaskMsg.GOTARGET_REQ, body=body)).body
+
+    async def pause_task(self) -> dict[str, Any]:
+        """暂停当前导航 (msg_type=3001)。AGV 必须正在执行任务。"""
+        return (await self._request(TaskMsg.PAUSE_REQ)).body
+
+    async def resume_task(self) -> dict[str, Any]:
+        """继续之前被暂停的导航 (msg_type=3002)。"""
+        return (await self._request(TaskMsg.RESUME_REQ)).body
+
     async def cancel_task(self) -> dict[str, Any]:
-        """
-        取消当前任务。具体 msg_type 待仙工文档确认(一般是 3003 / 3066 之一)。
-        现阶段抛 NotImplementedError 提示业务先别用。
-        """
-        raise NotImplementedError("cancel_task 待确认 msg_type 后再开放")
+        """取消当前导航 (msg_type=3003)。AGV 会停在当前位置。"""
+        return (await self._request(TaskMsg.CANCEL_REQ)).body
 
     async def get_status(self) -> dict[str, Any]:
         """AGVConnector 接口对齐:等价 snapshot()。"""
         return await self.snapshot()
 
-    # ───────── 内部工具 ─────────
+    # 内部工具
 
     async def _request(
         self,

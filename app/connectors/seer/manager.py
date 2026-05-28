@@ -28,7 +28,7 @@ class SeerManager:
         self._pool: dict[str, SeerAPI] = {}     # key=agv.uuid
         self._lock = asyncio.Lock()
 
-    # ───────── 句柄获取 ─────────
+    # 句柄获取
 
     async def get(self, agv: AGV) -> SeerAPI:
         """根据 AGV 行返回 SeerAPI;不存在则创建。"""
@@ -54,7 +54,7 @@ class SeerManager:
             log.info("SeerManager 已为 %s(%s) 建立 SeerAPI", agv.name, agv.ip)
             return api
 
-    # ───────── 业务便捷封装 ─────────
+    # 业务便捷封装
 
     async def ping(self, agv: AGV) -> dict:
         api = await self.get(agv)
@@ -64,7 +64,7 @@ class SeerManager:
         api = await self.get(agv)
         return await api.snapshot()
 
-    # ───────── 生命周期 ─────────
+    # 生命周期
 
     async def drop(self, agv_uuid: str) -> None:
         """AGV 配置变更或被删时,关掉旧句柄。"""

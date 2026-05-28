@@ -25,7 +25,7 @@ from app.core.security import hash_password
 from app.db.tortoise_conf import TORTOISE_ORM
 from app.models.user import Role, User
 
-# 初始账号清单 ─────────────────────────────────────────────────────
+# 初始账号清单 
 # 字段:username, password, role
 SEED_USERS: list[dict] = [
     {"username": "admin",    "password": "admin123", "role": Role.ADMIN},

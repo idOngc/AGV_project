@@ -67,7 +67,7 @@ class SeerTcpClient:
         # 主动推送的缓冲队列 (订阅类报文走这里, 当前阶段未启用)
         self.push_queue: asyncio.Queue[AGVResponse] = asyncio.Queue(maxsize=1024)
 
-    # ─────────────── 连接管理 ───────────────
+    # 连接管理
 
     @property
     def is_connected(self) -> bool:
@@ -128,7 +128,7 @@ class SeerTcpClient:
                 fut.set_exception(SeerNotConnected("连接已断开"))
         self._pending.clear()
 
-    # ─────────────── 请求 / 响应 ───────────────
+    # 请求 / 响应 
 
     def _next_req_id(self) -> int:
         # 2 字节, 1..65535 循环;0 留作"无效"标识
@@ -160,7 +160,6 @@ class SeerTcpClient:
                 log.warning("send_request 第 1 次失败,重连后重试: %s:%s", self.ip, self.port)
                 await self._close_silent()
                 await asyncio.sleep(0.1)
-        # mypy 安抚
         raise SeerNotConnected("不可达逻辑")
 
     async def _send_and_wait(
@@ -190,7 +189,7 @@ class SeerTcpClient:
         finally:
             self._pending.pop(req_id, None)
 
-    # ─────────────── 收包循环 ───────────────
+    # 收包循环
 
     async def _recv_loop(self) -> None:
         """
@@ -247,7 +246,7 @@ class SeerTcpClient:
                 except Exception:
                     pass
 
-    # ─────────────── 调试 ───────────────
+    # 调试
 
     def __repr__(self) -> str:
         return (

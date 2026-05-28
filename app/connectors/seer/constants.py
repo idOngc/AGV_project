@@ -9,12 +9,12 @@
     | 0x5A | 版本(1B) | 请求ID(2B,BE) | JSON长度(4B,BE) | 消息类型(2B,BE) | 保留位(6B) |
     后接 `jsonLen` 字节 UTF-8 JSON 数据体
 
-端口 ↔ API 号段路由规则:
+API 号段路由规则:
     1000-1999  → 19204(状态端口)   状态查询
     2000-2999  → 19205(控制端口)   控制命令
     3000-3999  → 19206(任务端口)   任务 / 导航
     4000-5999  → 19207(配置端口)   配置管理
-    5100-5199  → 19208(内核端口)   守护进程文件传输(ls/scp/rm)
+    # 5100-5199  → 19208(内核端口)   守护进程文件传输(ls/scp/rm)
     6000-6998  → 19210(其他端口)   杂项(DO/IO 等)
 """
 
@@ -23,7 +23,7 @@ from __future__ import annotations
 from enum import IntEnum
 
 
-# ───────────────────────── 端口 ─────────────────────────
+# 端口
 
 class SeerPort(IntEnum):
     """仙工 Robokit 各功能端口 (与官方 rbkNetProtoEnums.py 一致)。"""
@@ -36,7 +36,7 @@ class SeerPort(IntEnum):
     OTHER = 19210    # 杂项 (6000-6998)
 
 
-# ────────────────────── msg_type 常用 API 号 ──────────────────────
+# msg_type 常用 API 号
 # 这里仅列实际在官方 Python 示例 里出现过 / 被明确点名的 API 号。
 # 后续需要哪个再加哪个,不一次性加一堆报文里从未用过的。
 
@@ -63,7 +63,10 @@ class CtrlMsg(IntEnum):
 
 class TaskMsg(IntEnum):
     """任务 / 导航 (端口 19206)。"""
-    GOTARGET_REQ = 3051    # 前往目标点 {"id": "AP1", "source_id": "...", "task_id": "..."}
+    PAUSE_REQ = 3001       # 暂停当前导航
+    RESUME_REQ = 3002      # 继续当前导航
+    CANCEL_REQ = 3003      # 取消当前导航
+    GOTARGET_REQ = 3051    # 路径导航 {"id":"AP1","source_id":"...","task_id":"...","operation":"JackLoad",...}
 
 
 class KernelMsg(IntEnum):
@@ -78,7 +81,7 @@ class OtherMsg(IntEnum):
     SETDO_REQ = 6001       # 设置数字输出
 
 
-# ────────────────────── msg_type → 端口 路由 ──────────────────────
+# msg_type → 端口 路由
 
 def port_for(msg_type: int) -> SeerPort:
     """

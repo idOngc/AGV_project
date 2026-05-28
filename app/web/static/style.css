@@ -148,6 +148,24 @@ header.topbar button {
     margin-left: 12px;
 }
 
+header.topbar .topbar-link {
+    color: #fff;
+    text-decoration: none;
+    font-size: 13px;
+    padding: 4px 10px;
+    border-radius: 4px;
+    margin-right: 12px;
+    transition: background 0.15s;
+}
+
+header.topbar .topbar-link:hover {
+    background: rgba(255, 255, 255, 0.18);
+}
+
+header.topbar .topbar-link.active {
+    background: rgba(255, 255, 255, 0.25);
+}
+
 main {
     padding: 24px;
     max-width: 1280px;

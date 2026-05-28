@@ -52,20 +52,20 @@ async def get_agv(
     return AGVOut.model_validate(agv)
 
 
-@router.patch("/{uuid}", response_model=AGVOut, summary="部分更新 AGV")
-async def update_agv(
-    uuid: str,
-    payload: AGVUpdateIn,
-    _: User = Depends(require_admin_dep),
-) -> AGVOut:
-    agv = await agv_service.update_agv(uuid, payload.model_dump(exclude_unset=True))
-    return AGVOut.model_validate(agv)
+# @router.patch("/{uuid}", response_model=AGVOut, summary="部分更新 AGV")
+# async def update_agv(
+#     uuid: str,
+#     payload: AGVUpdateIn,
+#     _: User = Depends(require_admin_dep),
+# ) -> AGVOut:
+#     agv = await agv_service.update_agv(uuid, payload.model_dump(exclude_unset=True))
+#     return AGVOut.model_validate(agv)
 
 
-@router.delete("/{uuid}", summary="删除 AGV(默认软删,hard=true 走硬删)")
+@router.delete("/{uuid}", summary="删除 AGV")
 async def delete_agv(
     uuid: str,
-    hard: bool = Query(False, description="true 时彻底删除记录"),
+    hard: bool = Query(True, description="true 时彻底删除记录"),
     user: User = Depends(require_admin_dep),
 ) -> dict:
     if hard:
@@ -75,13 +75,11 @@ async def delete_agv(
     return {"deleted": uuid, "hard": False}
 
 
-# ─────────────────────────────────────────────────────────────────
 # 通信类接口 —— 依赖 SEER 连接层
 # 实装顺序: SeerTcpClient → SeerAPI → SeerManager → 这里
-# ─────────────────────────────────────────────────────────────────
 
 
-@router.post("/{uuid}/ping", summary="测试与 AGV 的通信(发 INFO_REQ 看响应)")
+@router.post("/{uuid}/ping", summary="通信测试")
 async def ping_agv(
     uuid: str,
     _: User = Depends(get_current_user),
@@ -92,7 +90,7 @@ async def ping_agv(
     return await seer_manager.ping(agv)
 
 
-@router.get("/{uuid}/status", summary="AGV 实时状态快照(电量/位置/速度/任务)")
+@router.get("/{uuid}/status", summary="AGV 实时状态")
 async def get_agv_status(
     uuid: str,
     _: User = Depends(get_current_user),

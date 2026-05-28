@@ -1,0 +1,276 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统-任务历史</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>AGV 调度系统-任务历史</h1>
+        <div>
+            <a href="dashboard.html" class="topbar-link">AGV 控制台</a>
+            <a href="tasks.html" class="topbar-link active">任务历史</a>
+            <span class="user" id="userInfo"></span>
+            <button class="ghost" id="logoutBtn">退出</button>
+        </div>
+    </header>
+
+    <main>
+        <div class="toolbar">
+            <h2>任务列表</h2>
+
+            <label class="muted" style="margin: 0; display: flex; align-items: center; gap: 6px;">
+                AGV
+                <select id="filterAgv">
+                    <option value="">全部</option>
+                </select>
+            </label>
+
+            <label class="muted" style="margin: 0; display: flex; align-items: center; gap: 6px;">
+                状态
+                <select id="filterStatus">
+                    <option value="">全部</option>
+                    <option value="0">INIT</option>
+                    <option value="1">RUNNING</option>
+                    <option value="2">PAUSED</option>
+                    <option value="3">COMPLETED</option>
+                    <option value="4">FAILED</option>
+                    <option value="5">CANCELED</option>
+                </select>
+            </label>
+
+            <button class="secondary" id="refreshBtn">刷新</button>
+
+            <label class="muted" style="margin: 0; display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="autoRefresh" checked style="width:auto;display:inline;margin:0;">
+                自动刷新 (3s)
+            </label>
+        </div>
+
+        <table id="taskTable">
+            <thead>
+                <tr>
+                    <th>#ID</th>
+                    <th>AGV</th>
+                    <th>类型</th>
+                    <th>目标点</th>
+                    <th>动作</th>
+                    <th>状态</th>
+                    <th>创建</th>
+                    <th>完成</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <p class="muted" style="margin-top: 8px;" id="emptyHint"></p>
+    </main>
+
+    <!-- 任务详情弹窗 -->
+    <div class="modal-mask hidden" id="detailModal">
+        <div class="modal">
+            <h3 id="detailTitle">任务详情</h3>
+            <pre id="detailBody">加载中...</pre>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="detailModal">关闭</button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        //     公用工具 (与 dashboard.html 同步保持) 
+        const token = localStorage.getItem("token");
+        const user = JSON.parse(localStorage.getItem("user") || "null");
+        if (!token || !user) { window.location.replace("index.html"); }
+
+        document.getElementById("userInfo").textContent = `${user.username} (${user.role})`;
+
+        async function api(method, path, body) {
+            const opts = {
+                method,
+                headers: { "Authorization": "Bearer " + token, "Content-Type": "application/json" }
+            };
+            if (body !== undefined) opts.body = JSON.stringify(body);
+            const resp = await fetch(path, opts);
+            if (resp.status === 401) {
+                localStorage.clear();
+                alert("会话已失效,请重新登录");
+                window.location.replace("index.html");
+                throw new Error("401");
+            }
+            const text = await resp.text();
+            const data = text ? JSON.parse(text) : null;
+            if (!resp.ok) {
+                throw new Error((data && (data.msg || data.detail)) || `${resp.status} ${resp.statusText}`);
+            }
+            return data;
+        }
+
+        function showModal(id) { document.getElementById(id).classList.remove("hidden"); }
+        function hideModal(id) { document.getElementById(id).classList.add("hidden"); }
+        document.querySelectorAll("[data-close]").forEach(btn => {
+            btn.addEventListener("click", () => hideModal(btn.dataset.close));
+        });
+
+        document.getElementById("logoutBtn").addEventListener("click", () => {
+            localStorage.clear();
+            window.location.replace("index.html");
+        });
+
+        //     渲染 
+        const STATUS_NAME = {
+            0: "INIT", 1: "RUNNING", 2: "PAUSED",
+            3: "COMPLETED", 4: "FAILED", 5: "CANCELED"
+        };
+        const STATUS_BADGE = {
+            0: "unknown", 1: "on", 2: "unknown",
+            3: "on", 4: "off", 5: "off"
+        };
+        const TYPE_NAME = {
+            1: "NAVIGATE", 2: "JACK_LOAD", 3: "JACK_UNLOAD",
+            4: "FORK_LOAD", 5: "FORK_UNLOAD",
+            6: "ROLLER_LOAD", 7: "ROLLER_UNLOAD",
+            99: "CUSTOM"
+        };
+
+        function fmtTime(s) {
+            if (!s) return "-";
+            const d = new Date(s);
+            const pad = n => String(n).padStart(2, "0");
+            return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+        }
+
+        async function loadAgvOptions() {
+            try {
+                const agvs = await api("GET", "/api/v1/agvs");
+                const sel = document.getElementById("filterAgv");
+                agvs.forEach(a => {
+                    const opt = document.createElement("option");
+                    opt.value = a.uuid;
+                    opt.textContent = `${a.name} (${a.uuid})`;
+                    sel.appendChild(opt);
+                });
+            } catch (e) {
+                console.warn("加载 AGV 列表失败:", e);
+            }
+        }
+
+        async function loadTasks() {
+            const tbody = document.querySelector("#taskTable tbody");
+            const hint = document.getElementById("emptyHint");
+            const params = new URLSearchParams();
+            const agv = document.getElementById("filterAgv").value;
+            const status = document.getElementById("filterStatus").value;
+            if (agv) params.set("agv_uuid", agv);
+            if (status !== "") params.set("status", status);
+            params.set("limit", "100");
+
+            try {
+                const tasks = await api("GET", "/api/v1/tasks?" + params.toString());
+                if (tasks.length === 0) {
+                    tbody.innerHTML = "";
+                    hint.textContent = "没有匹配的任务。在 AGV 控制台点「下发任务」可以创建一个。";
+                    return;
+                }
+                hint.textContent = "";
+                tbody.innerHTML = tasks.map(t => {
+                    const canPause  = t.status === 1;
+                    const canResume = t.status === 2;
+                    const canCancel = t.status === 1 || t.status === 2;
+                    return `
+                    <tr data-id="${t.id}">
+                        <td><a href="#" data-act="detail" data-id="${t.id}">#${t.id}</a></td>
+                        <td>${t.agv_name} <span class="muted">(${t.agv_uuid})</span></td>
+                        <td>${TYPE_NAME[t.type] || t.type}</td>
+                        <td><code>${t.target_point}</code></td>
+                        <td>${t.operation || "-"}</td>
+                        <td>
+                            <span class="badge ${STATUS_BADGE[t.status] || 'unknown'}">
+                                ${STATUS_NAME[t.status] || t.status}
+                            </span>
+                            ${t.error_msg ? `<div class="muted" title="${escapeHtml(t.error_msg)}">${escapeHtml(t.error_msg.substring(0,40))}${t.error_msg.length>40?'…':''}</div>` : ""}
+                        </td>
+                        <td class="muted">${fmtTime(t.created_at)}</td>
+                        <td class="muted">${fmtTime(t.finished_at)}</td>
+                        <td class="actions">
+                            <button data-act="pause"  data-id="${t.id}" class="secondary" ${canPause?"":"disabled"}>暂停</button>
+                            <button data-act="resume" data-id="${t.id}" class="secondary" ${canResume?"":"disabled"}>继续</button>
+                            <button data-act="cancel" data-id="${t.id}" class="danger"    ${canCancel?"":"disabled"}>取消</button>
+                        </td>
+                    </tr>
+                    `;
+                }).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="9" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        function escapeHtml(s) {
+            return String(s).replace(/[&<>"']/g, c => ({
+                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
+            }[c]));
+        }
+
+        //  行内动作 
+        document.querySelector("#taskTable").addEventListener("click", async (e) => {
+            const a = e.target.closest("a[data-act]");
+            const btn = e.target.closest("button[data-act]");
+            const node = a || btn;
+            if (!node) return;
+            if (a) e.preventDefault();
+
+            const id = node.dataset.id;
+            const act = node.dataset.act;
+            if (act === "detail") {
+                await showDetail(id);
+                return;
+            }
+            const labels = { pause: "暂停", resume: "继续", cancel: "取消" };
+            if (act === "cancel" && !confirm(`确认取消任务 #${id}? AGV 会停在当前位置。`)) return;
+            btn.disabled = true;
+            const orig = btn.textContent;
+            btn.textContent = labels[act] + "中...";
+            try {
+                await api("POST", `/api/v1/tasks/${id}/${act}`);
+                await loadTasks();
+            } catch (err) {
+                alert(`${labels[act]} 失败: ${err.message}`);
+                btn.disabled = false;
+                btn.textContent = orig;
+            }
+        });
+
+        async function showDetail(id) {
+            document.getElementById("detailTitle").textContent = `任务详情 · #${id}`;
+            const body = document.getElementById("detailBody");
+            body.textContent = "加载中...";
+            showModal("detailModal");
+            try {
+                const data = await api("GET", `/api/v1/tasks/${id}`);
+                body.textContent = JSON.stringify(data, null, 2);
+            } catch (e) {
+                body.textContent = "查询失败: " + e.message;
+            }
+        }
+
+        //  过滤器 & 自动刷新 
+        document.getElementById("refreshBtn").addEventListener("click", loadTasks);
+        document.getElementById("filterAgv").addEventListener("change", loadTasks);
+        document.getElementById("filterStatus").addEventListener("change", loadTasks);
+
+        let autoTimer = null;
+        function setupAutoRefresh() {
+            if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
+            if (document.getElementById("autoRefresh").checked) {
+                autoTimer = setInterval(loadTasks, 3000);
+            }
+        }
+        document.getElementById("autoRefresh").addEventListener("change", setupAutoRefresh);
+
+        //  首屏 
+        loadAgvOptions().then(loadTasks).then(setupAutoRefresh);
+    </script>
+</body>
+</html>

@@ -1,11 +1,7 @@
 """
 FastAPI 入口 —— 负责 lifespan(启动/关闭 Tortoise)、路由挂载、全局异常处理。
 
-启动:
-    uvicorn app.main:app --reload
-
-Redis: 当前阶段暂未启用。文件保留在 app/db/redis.py,将来要启用只需把下面
-标了 `# REDIS:` 的注释取消,并在 requirements.txt 解开 redis 依赖即可。
+Redis: 当前阶段暂未启用
 """
 
 from __future__ import annotations
@@ -27,6 +23,7 @@ from app.core.logging import setup_logging
 # REDIS: from app.db.redis import close_redis, init_redis
 from app.db.tortoise_conf import TORTOISE_ORM
 from app.utils.exceptions import register_exception_handlers
+from app.workers.task_poller import task_poller
 
 setup_logging()
 log = logging.getLogger(__name__)
@@ -41,12 +38,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
     # REDIS: await init_redis()
 
     # 注: SEER 连接走懒连接策略,这里不需要主动 init_from_db。
-    # TODO: 状态轮询 worker 在这里启动
+    await task_poller.start()
 
     try:
         yield
     finally:
         log.info("=== shutting down ===")
+        await task_poller.stop()
         await seer_manager.close_all()
         # REDIS: await close_redis()
         await Tortoise.close_connections()
@@ -61,15 +59,13 @@ app = FastAPI(
 register_exception_handlers(app)
 app.include_router(api_router)
 
-
+# 测试
 @app.get("/health", tags=["meta"], summary="健康检查")
 async def health() -> dict:
     return {"status": "ok", "app": settings.APP_NAME, "env": settings.APP_ENV}
 
 
-# ─── 静态前端(临时页面,将来 Vue 上线后移除) ─────────────────────
-# 挂载顺序很重要:必须在所有 API 路由声明完之后再挂载静态资源,
-# 否则 / 会被 StaticFiles 截走。
+# 静态前端(临时页面,将来 Vue 上线后移除) 
 _WEB_DIR = Path(__file__).parent / "web" / "static"
 if _WEB_DIR.is_dir():
     app.mount(

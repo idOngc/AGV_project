@@ -89,7 +89,7 @@ class AGVProtocol:
         packets: list[tuple[int, int, dict, bytes]] = []
 
         while len(buffer) >= HEADER_SIZE:
-            # ── 第 1 步:对齐到 START_BYTE ──
+            # 对齐到 START_BYTE
             if buffer[0] != START_BYTE:
                 idx = buffer.find(bytes([START_BYTE]))
                 if idx < 0:
@@ -106,13 +106,13 @@ class AGVProtocol:
             body_len = header[3]
             msg_type = header[4]
 
-            # ── 第 2 步:校验版本号 ──
+            # 校验版本号
             if version != VERSION:
                 # 版本不匹配 → 这个起始符是伪的,跳过一字节重扫
                 buffer = buffer[1:]
                 continue
 
-            # ── 第 3 步:校验 body_len ──
+            # 校验 body_len
             if body_len > MAX_BODY_LEN:
                 # 异常 body_len → 协议错乱,跳过一字节重扫
                 buffer = buffer[1:]
@@ -123,7 +123,7 @@ class AGVProtocol:
                 # 数据不足,等下次读取
                 break
 
-            # ── 第 4 步:解析 body ──
+            # 解析 body
             raw = buffer[:total_len]
             body_dict: dict = {}
             if body_len > 0:

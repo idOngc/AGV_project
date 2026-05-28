@@ -3,14 +3,15 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AGV 调度系统 · 控制台</title>
+    <title>AGV 调度系统-控制台</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <!-- 顶栏 -->
     <header class="topbar">
-        <h1>AGV 调度系统 · 控制台</h1>
+        <h1>AGV 调度系统-控制台</h1>
         <div>
+            <a href="tasks.html" class="topbar-link">任务历史</a>
             <span class="user" id="userInfo"></span>
             <button class="ghost" id="logoutBtn">退出</button>
         </div>
@@ -49,7 +50,7 @@
     <div class="modal-mask hidden" id="addModal">
         <form class="modal" id="addForm">
             <h3>新增 AGV</h3>
-            <label>UUID(唯一标识,推荐用机器人 SN)
+            <label>UUID(唯一标识)
                 <input type="text" id="newUuid" required maxlength="64">
             </label>
             <label>显示名
@@ -66,7 +67,7 @@
                     <option value="4">翻转车</option>
                 </select>
             </label>
-            <p class="muted">端口(默认值符合仙工 Robokit 标准,一般不用改)</p>
+            <p class="muted">端口(默认值符合仙工 Robokit 标准)</p>
             <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
                 <label>状态端口 <input type="number" id="newPortState" value="19204"></label>
                 <label>控制端口 <input type="number" id="newPortCtrl"  value="19205"></label>
@@ -94,8 +95,71 @@
         </div>
     </div>
 
+    <!-- 下发任务弹窗 -->
+    <div class="modal-mask hidden" id="taskModal">
+        <form class="modal" id="taskForm">
+            <h3 id="taskTitle">下发任务</h3>
+            <!-- <p class="muted">
+                字段对应仙工 3051 GOTARGET_REQ。
+                <strong>operation</strong> 需在 Roboshop Pro 给该站点配置好执行对象后才能用,
+                否则 AGV 会拒绝。
+            </p> -->
+
+            <label>目标站点 <span class="muted">(必填,等于仙工 body.id, 如 AP1 / LM6)</span>
+                <input type="text" id="taskTargetPoint" required maxlength="64" placeholder="AP1">
+            </label>
+
+            <label>任务分类 <span class="muted">(仅做归档,不影响下发参数)</span>
+                <select id="taskType">
+                    <option value="1" selected>纯导航 (NAVIGATE)</option>
+                    <option value="2">顶升取货 (JACK_LOAD)</option>
+                    <option value="3">顶升放货 (JACK_UNLOAD)</option>
+                    <!-- <option value="4">叉车取货 (FORK_LOAD)</option>
+                    <option value="5">叉车放货 (FORK_UNLOAD)</option>
+                    <option value="6">辊筒取货 (ROLLER_LOAD)</option>
+                    <option value="7">辊筒放货 (ROLLER_UNLOAD)</option>
+                    <option value="99">自定义 (CUSTOM)</option> -->
+                </select>
+            </label>
+
+            <label>动作 operation <span class="muted">(NAVIGATE 留空)</span>
+                <select id="taskOperation">
+                    <option value="">OnlyNavi</option>
+                    <option value="JackLoad">JackLoad</option>
+                    <option value="JackUnload">JackUnload</option>
+                    <option value="JackHeight">JackHeight</option>
+                    <!-- <option value="ForkLoad">ForkLoad</option>
+                    <option value="ForkUnload">ForkUnload</option>
+                    <option value="RollerLoad">RollerLoad</option>
+                    <option value="RollerUnload">RollerUnload</option>
+                    <option value="HookLoad">HookLoad</option>
+                    <option value="HookUnload">HookUnload</option> -->
+                </select>
+            </label>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label>起点 source_id <span class="muted">(可选)</span>
+                    <input type="text" id="taskSourceId" maxlength="64" placeholder="LM1">
+                </label>
+                <label>朝向 angle (rad, 可选)
+                    <input type="number" step="any" id="taskAngle" placeholder="例如 1.57">
+                </label>
+            </div>
+
+            <label>其它参数 extra_args (JSON, 可选)
+                <input type="text" id="taskExtraArgs" placeholder='{"script_args":["xxx"]}'>
+            </label>
+
+            <div id="taskError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="taskModal">取消</button>
+                <button type="submit">下发</button>
+            </div>
+        </form>
+    </div>
+
     <script>
-        // ─── 基础 API 客户端 ────────────────────────────────────────
+        //  基础 API 客户端 
         const token = localStorage.getItem("token");
         const user = JSON.parse(localStorage.getItem("user") || "null");
 
@@ -133,20 +197,20 @@
             return data;
         }
 
-        // ─── 弹窗工具 ────────────────────────────────────────────────
+        //     弹窗工具                                                 
         function showModal(id) { document.getElementById(id).classList.remove("hidden"); }
         function hideModal(id) { document.getElementById(id).classList.add("hidden"); }
         document.querySelectorAll("[data-close]").forEach(btn => {
             btn.addEventListener("click", () => hideModal(btn.dataset.close));
         });
 
-        // ─── 退出 ─────────────────────────────────────────────────
+        //     退出                                                  
         document.getElementById("logoutBtn").addEventListener("click", () => {
             localStorage.clear();
             window.location.replace("index.html");
         });
 
-        // ─── AGV 列表加载 ───────────────────────────────────────────
+        //     AGV 列表加载                                            
         const MODE_NAMES = { 1: "叉车", 2: "顶升车", 3: "拖车", 4: "翻转车" };
         let cachedAgvs = [];
 
@@ -183,8 +247,9 @@
                     </td>
                     <td><span class="badge unknown" data-conn-cell="${idx}">未测</span></td>
                     <td class="actions">
-                        <button data-act="ping"   data-uuid="${a.uuid}">测通信</button>
-                        <button data-act="status" data-uuid="${a.uuid}" class="secondary">实时状态</button>
+                        <button data-act="ping"     data-uuid="${a.uuid}">测通信</button>
+                        <button data-act="status"   data-uuid="${a.uuid}" class="secondary">实时状态</button>
+                        <button data-act="dispatch" data-uuid="${a.uuid}" data-name="${a.name}">下发任务</button>
                         ${user.role === "admin" ? `
                             <button data-act="delete" data-uuid="${a.uuid}" class="danger">删除</button>
                         ` : ""}
@@ -193,7 +258,7 @@
             `).join("");
         }
 
-        // ─── 行内动作 ────────────────────────────────────────────
+        //     行内动作                                             
         document.querySelector("#agvTable").addEventListener("click", async (e) => {
             const btn = e.target.closest("button[data-act]");
             if (!btn) return;
@@ -204,8 +269,10 @@
                 await pingOne(uuid, btn);
             } else if (act === "status") {
                 await showStatus(uuid);
+            } else if (act === "dispatch") {
+                openTaskModal(uuid, btn.dataset.name);
             } else if (act === "delete") {
-                if (!confirm(`确认删除 AGV ${uuid}？(默认软删,可在数据库恢复)`)) return;
+                if (!confirm(`确认删除 AGV ${uuid}?`)) return;
                 try {
                     await api("DELETE", `/api/v1/agvs/${uuid}`);
                     await loadAgvs();
@@ -259,7 +326,7 @@
             }
         }
 
-        // ─── 新增 AGV ────────────────────────────────────────────
+        // 新增 AGV
         document.getElementById("addBtn").addEventListener("click", () => {
             if (user.role !== "admin") {
                 alert("只有 admin 角色能新增 AGV");
@@ -294,7 +361,72 @@
             }
         });
 
-        // ─── 刷新按钮 + 首次加载 ────────────────────────────────
+        //     下发任务
+        let currentTaskAgvUuid = null;
+
+        function openTaskModal(agvUuid, agvName) {
+            currentTaskAgvUuid = agvUuid;
+            document.getElementById("taskTitle").textContent = `下发任务 · ${agvName} (${agvUuid})`;
+            document.getElementById("taskForm").reset();
+            document.getElementById("taskError").textContent = "";
+            showModal("taskModal");
+        }
+
+        document.getElementById("taskForm").addEventListener("submit", async (e) => {
+            e.preventDefault();
+            const errEl = document.getElementById("taskError");
+            errEl.textContent = "";
+
+            //  extra_args 是 JSON 字符串,空就传 {}
+            let extraArgs = {};
+            const raw = document.getElementById("taskExtraArgs").value.trim();
+            if (raw) {
+                try {
+                    extraArgs = JSON.parse(raw);
+                    if (typeof extraArgs !== "object" || Array.isArray(extraArgs)) {
+                        throw new Error("extra_args 必须是 JSON 对象");
+                    }
+                } catch (err) {
+                    errEl.textContent = "extra_args 不是合法 JSON: " + err.message;
+                    return;
+                }
+            }
+
+            const angleStr = document.getElementById("taskAngle").value.trim();
+            const payload = {
+                agv_uuid: currentTaskAgvUuid,
+                type: parseInt(document.getElementById("taskType").value, 10),
+                target_point: document.getElementById("taskTargetPoint").value.trim(),
+                source_id: document.getElementById("taskSourceId").value.trim() || null,
+                operation: document.getElementById("taskOperation").value || null,
+                angle: angleStr ? parseFloat(angleStr) : null,
+                extra_args: extraArgs,
+            };
+
+            const submitBtn = e.submitter || document.querySelector("#taskForm button[type=submit]");
+            submitBtn.disabled = true;
+            submitBtn.textContent = "下发中...";
+            try {
+                const task = await api("POST", "/api/v1/tasks", payload);
+                hideModal("taskModal");
+                if (confirm(`任务已下发: #${task.id} ${task.target_point} (状态 ${statusName(task.status)})\n打开任务历史?`)) {
+                    window.location.href = "tasks.html";
+                }
+            } catch (err) {
+                errEl.textContent = err.message;
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.textContent = "下发";
+            }
+        });
+
+        const TASK_STATUS_NAME = {
+            0: "INIT", 1: "RUNNING", 2: "PAUSED",
+            3: "COMPLETED", 4: "FAILED", 5: "CANCELED"
+        };
+        function statusName(code) { return TASK_STATUS_NAME[code] || code; }
+
+        // 刷新按钮 + 首次加载
         document.getElementById("refreshBtn").addEventListener("click", loadAgvs);
         loadAgvs();
     </script>

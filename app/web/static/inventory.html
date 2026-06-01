@@ -1,0 +1,253 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统-库存 / 放料图</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>库存 / 放料图</h1>
+        <div></div>
+    </header>
+
+    <main>
+        <div class="tabs">
+            <div class="tab active" data-tab="input">库位输入 (绑定零件)</div>
+            <div class="tab" data-tab="map">放料图 (色块视图)</div>
+        </div>
+
+        <!-- 通用工具栏 -->
+        <div class="toolbar">
+            <button class="secondary" id="refreshBtn">手动刷新</button>
+            <label class="muted" style="margin: 0; display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="autoRefresh" style="width:auto;display:inline;margin:0;">
+                开启定时刷新 (2s)
+            </label>
+            <span class="muted" id="updatedAt"></span>
+        </div>
+
+        <!-- ===================== 库位输入 卡片网格 ===================== -->
+        <div class="tab-panel active" data-panel="input">
+            <div id="cardGrid" class="card-grid"></div>
+        </div>
+
+        <!-- ===================== 放料图 色块 ===================== -->
+        <div class="tab-panel" data-panel="map">
+            <div class="map-legend">
+                <span class="lg"><span class="lg-color inv-DISABLED"></span> 未启用</span>
+                <span class="lg"><span class="lg-color inv-EMPTY_SLOT"></span> 空库位</span>
+                <span class="lg"><span class="lg-color inv-EMPTY_PALLET"></span> 只有母托</span>
+                <span class="lg"><span class="lg-color inv-FULL_MATERIAL"></span> 有托盘有料</span>
+                <span class="lg"><span class="lg-color inv-IN_USE"></span> 有托盘无料 / 占用</span>
+                <span class="lg"><span class="lg-color inv-PENDING_ALLOC"></span> 待分配</span>
+            </div>
+            <div id="mapGrid" class="map-grid"></div>
+        </div>
+    </main>
+
+    <!-- ===== 绑定弹窗 ===== -->
+    <div class="modal-mask hidden" id="bindModal">
+        <form class="modal" id="bindForm">
+            <h3 id="bindTitle">绑定库位</h3>
+            <p class="muted" id="bindSub"></p>
+
+            <label>状态
+                <select id="bindStatus">
+                    <option value="3">有托盘有料 (FULL_MATERIAL)</option>
+                    <option value="2">只有母托 (EMPTY_PALLET)</option>
+                    <option value="1">空库位 (EMPTY_SLOT,清空)</option>
+                </select>
+            </label>
+
+            <label>零件 (满料时必填,空托时忽略)
+                <select id="bindPart">
+                    <option value="">— 不绑零件 —</option>
+                </select>
+            </label>
+
+            <label>托盘类型 (满料可自动从零件推断;空托必填)
+                <select id="bindPt">
+                    <option value="">— 自动 / 不指定 —</option>
+                </select>
+            </label>
+
+            <div id="bindError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="bindModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        App.renderTopbar("库存 / 放料图", "inventory.html");
+        App.bindModalCloseButtons();
+        App.bindTabs();
+        const api = App.api;
+        const role = App.user.role;
+
+        let cachedInv = [];
+        let cachedWs = [];
+        let cachedParts = [];
+        let cachedPts = [];
+        let currentWsUuid = null;
+        let currentWsCode = null;
+
+        async function loadAll() {
+            try {
+                [cachedInv, cachedWs, cachedParts, cachedPts] = await Promise.all([
+                    api("GET", "/api/v1/inventory"),
+                    api("GET", "/api/v1/ws"),
+                    api("GET", "/api/v1/parts"),
+                    api("GET", "/api/v1/pallet-types"),
+                ]);
+                renderCards();
+                renderMap();
+                document.getElementById("updatedAt").textContent =
+                    "更新于 " + App.fmtTime(new Date().toISOString());
+            } catch (e) {
+                document.getElementById("cardGrid").innerHTML =
+                    `<div class="error">${e.message}</div>`;
+            }
+        }
+
+        /* 把 ws/inv 按 ws_id 合并;返回 [{ws, inv}] (排序: ws.priority desc, id asc) */
+        function joinWsInv() {
+            const invByWs = new Map(cachedInv.map(i => [i.ws_id, i]));
+            return cachedWs
+                .slice()
+                .sort((a, b) => b.priority - a.priority || a.id - b.id)
+                .map(ws => ({ ws, inv: invByWs.get(ws.id) || null }));
+        }
+
+        /* ========== 库位输入卡片 ========== */
+        function renderCards() {
+            const grid = document.getElementById("cardGrid");
+            const items = joinWsInv();
+            if (items.length === 0) {
+                grid.innerHTML = `<p class="muted">还没有库位,请先去「库位管理」创建。</p>`;
+                return;
+            }
+            const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
+            const ptMap = new Map(cachedPts.map(p => [p.id, p.code]));
+
+            grid.innerHTML = items.map(({ ws, inv }) => {
+                const partCode = inv && inv.part_id ? partMap.get(inv.part_id) || "—" : "";
+                const ptCode = inv && inv.pallet_type_id ? ptMap.get(inv.pallet_type_id) || "—" : "";
+                const tag = inv ? (App.INVENTORY_STATUS[inv.status]?.name || "?") : "未初始化";
+                const lockedTip = inv && inv.is_locked
+                    ? `<div class="muted" style="color:#dc3545;">已锁定 by task #${inv.locked_by_task_id || "?"}</div>`
+                    : "";
+                return `
+                <div class="slot-card">
+                    <div class="slot-head">
+                        <span class="slot-no">${App.escapeHtml(ws.code)}</span>
+                        <span class="slot-tag">
+                            ${App.escapeHtml(partCode || tag)}<br>
+                            <span class="muted">${App.escapeHtml(ptCode || "")}</span>
+                        </span>
+                    </div>
+                    ${lockedTip}
+                    <div class="slot-actions">
+                        ${role === "admin" ? `
+                            <button class="secondary" data-act="bind"  data-uuid="${ws.uuid}" data-code="${App.escapeHtml(ws.code)}">绑定</button>
+                            <button class="ghost"     data-act="clear" data-uuid="${ws.uuid}" data-code="${App.escapeHtml(ws.code)}">清空</button>
+                            ${inv && inv.is_locked ? `<button class="danger" data-act="unlock" data-id="${inv.id}">强制解锁</button>` : ""}
+                        ` : `<span class="muted" style="font-size:11px;">${App.escapeHtml(tag)}</span>`}
+                    </div>
+                </div>`;
+            }).join("");
+        }
+
+        document.getElementById("cardGrid").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const act = btn.dataset.act;
+            if (act === "bind") {
+                openBind(btn.dataset.uuid, btn.dataset.code);
+            } else if (act === "clear") {
+                if (!confirm(`确认清空库位 ${btn.dataset.code}?`)) return;
+                try { await api("POST", `/api/v1/inventory/by-ws/${btn.dataset.uuid}/clear`); await loadAll(); }
+                catch (err) { alert(err.message); }
+            } else if (act === "unlock") {
+                if (!confirm(`确认强制解锁库存 #${btn.dataset.id}?`)) return;
+                try { await api("POST", `/api/v1/inventory/${btn.dataset.id}/unlock`); await loadAll(); }
+                catch (err) { alert(err.message); }
+            }
+        });
+
+        function openBind(wsUuid, wsCode) {
+            if (role !== "admin") return alert("只有 admin 能绑定");
+            currentWsUuid = wsUuid;
+            currentWsCode = wsCode;
+            document.getElementById("bindTitle").textContent = "绑定库位 " + wsCode;
+            document.getElementById("bindSub").textContent = "WS uuid: " + wsUuid;
+            document.getElementById("bindStatus").value = "3";
+            // 填零件下拉
+            const psel = document.getElementById("bindPart");
+            psel.innerHTML = `<option value="">— 不绑零件 —</option>` +
+                cachedParts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+            const tsel = document.getElementById("bindPt");
+            tsel.innerHTML = `<option value="">— 自动 / 不指定 —</option>` +
+                cachedPts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+            document.getElementById("bindError").textContent = "";
+            App.showModal("bindModal");
+        }
+
+        document.getElementById("bindForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("bindError");
+            errEl.textContent = "";
+            const payload = {
+                status: parseInt(document.getElementById("bindStatus").value, 10),
+                part_id: parseInt(document.getElementById("bindPart").value, 10) || null,
+                pallet_type_id: parseInt(document.getElementById("bindPt").value, 10) || null,
+            };
+            try {
+                await api("POST", `/api/v1/inventory/by-ws/${currentWsUuid}/bind`, payload);
+                App.hideModal("bindModal");
+                await loadAll();
+            } catch (err) { errEl.textContent = err.message; }
+        });
+
+        /* ========== 放料图 色块 ========== */
+        function renderMap() {
+            const grid = document.getElementById("mapGrid");
+            const items = joinWsInv();
+            if (items.length === 0) {
+                grid.innerHTML = `<p class="muted">还没有库位</p>`;
+                return;
+            }
+            const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
+            grid.innerHTML = items.map(({ ws, inv }) => {
+                let cls = "inv-EMPTY_SLOT";
+                let partLabel = "";
+                if (!ws.is_active) {
+                    cls = "inv-DISABLED";
+                } else if (inv) {
+                    cls = "inv-" + (App.INVENTORY_STATUS[inv.status]?.code || "EMPTY_SLOT");
+                    if (inv.part_id) {
+                        partLabel = partMap.get(inv.part_id) || ("#" + inv.part_id);
+                    } else if (inv.pallet_type_id) {
+                        partLabel = cachedPts.find(p => p.id === inv.pallet_type_id)?.code || "";
+                    }
+                }
+                return `
+                <div class="map-cell ${cls}" title="${App.escapeHtml(ws.uuid)}">
+                    <span class="mc-no">${App.escapeHtml(ws.code)}</span>
+                    <span class="mc-part">${App.escapeHtml(partLabel)}</span>
+                </div>`;
+            }).join("");
+        }
+
+        /* ========== 自动刷新 ========== */
+        document.getElementById("refreshBtn").onclick = loadAll;
+        const applyAuto = App.makeAutoRefresh(loadAll, 2000, "autoRefresh");
+
+        loadAll().then(applyAuto);
+    </script>
+</body>
+</html>

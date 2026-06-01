@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统-库位管理</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>库位管理</h1>
+        <div></div>
+    </header>
+
+    <main>
+        <div class="toolbar">
+            <h2>库位 (WS) 列表</h2>
+            <button class="secondary" id="refreshBtn">刷新</button>
+            <button id="addBtn">新增库位</button>
+        </div>
+
+        <table id="wsTable">
+            <thead>
+                <tr>
+                    <th>#ID</th>
+                    <th>code</th>
+                    <th>名称</th>
+                    <th>库位类型</th>
+                    <th>放空托/满料/不良</th>
+                    <th>托盘形态</th>
+                    <th>托盘类型 (绑定)</th>
+                    <th>优先级</th>
+                    <th>启用</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <p class="muted" style="margin-top: 8px;" id="emptyHint"></p>
+    </main>
+
+    <!-- ===== WS 新增/编辑 ===== -->
+    <div class="modal-mask hidden" id="wsModal">
+        <form class="modal" id="wsForm">
+            <h3 id="wsModalTitle">新增库位</h3>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label>UUID
+                    <input type="text" id="wsUuid" required maxlength="64">
+                </label>
+                <label>code
+                    <input type="text" id="wsCode" required maxlength="64" placeholder="WS-001">
+                </label>
+            </div>
+
+            <label>名称
+                <input type="text" id="wsName" maxlength="128">
+            </label>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label>库位类型
+                    <select id="wsType">
+                        <option value="1">扫码库位/web</option>
+                        <option value="2">缓存库位</option>
+                        <option value="3">铁屑库位</option>
+                        <option value="4">仓库库位</option>
+                    </select>
+                </label>
+                <label>托盘形态
+                    <select id="wsBindMode">
+                        <option value="1">母子托</option>
+                        <option value="2" selected>母托</option>
+                        <option value="3">子托</option>
+                    </select>
+                </label>
+            </div>
+
+            <label style="margin-top: 8px;">允许放置 (子类型)</label>
+            <div style="display: flex; gap: 16px; padding: 8px 12px; border: 1px solid #d0d5dd; border-radius: 4px;">
+                <label style="margin: 0; display: flex; align-items: center; gap: 4px;">
+                    <input type="checkbox" id="wsAllowEmpty" checked style="width:auto;margin:0;display:inline;"> 放空托
+                </label>
+                <label style="margin: 0; display: flex; align-items: center; gap: 4px;">
+                    <input type="checkbox" id="wsAllowFull" checked style="width:auto;margin:0;display:inline;"> 放满料
+                </label>
+                <label style="margin: 0; display: flex; align-items: center; gap: 4px;">
+                    <input type="checkbox" id="wsAllowDefect" style="width:auto;margin:0;display:inline;"> 放不良料
+                </label>
+            </div>
+
+            <label style="margin-top: 12px;">允许的托盘类型 (按住 Ctrl/Shift 多选)
+                <select id="wsPalletTypes" multiple size="4"></select>
+            </label>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px;">
+                <label>坐标 X
+                    <input type="number" step="any" id="wsX" value="0">
+                </label>
+                <label>坐标 Y
+                    <input type="number" step="any" id="wsY" value="0">
+                </label>
+                <label>优先级
+                    <input type="number" id="wsPriority" value="100">
+                </label>
+            </div>
+
+            <div id="wsError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="wsModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ===== AGV 点位子表 ===== -->
+    <div class="modal-mask hidden" id="pointModal">
+        <div class="modal" style="max-width: 720px;">
+            <h3 id="pointModalTitle">AGV 点位</h3>
+            <p class="muted" id="pointModalSub"></p>
+
+            <table class="sub" id="pointTable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>AGV</th>
+                        <th>AP</th>
+                        <th>pre</th>
+                        <th>tp</th>
+                        <th>height</th>
+                        <th>lift</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <form id="pointForm" style="margin-top: 12px;">
+                <h4 style="font-size: 13px; color: #2a4a8a; margin-bottom: 8px;">新增 / 更新点位</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px;">
+                    <label>AGV
+                        <select id="pAgvId" required></select>
+                    </label>
+                    <label>AP (必填)
+                        <input type="text" id="pAp" required maxlength="64">
+                    </label>
+                    <label>pre
+                        <input type="text" id="pPre" maxlength="64">
+                    </label>
+                    <label>tp
+                        <input type="text" id="pTp" maxlength="64">
+                    </label>
+                    <label>height_pre
+                        <input type="text" id="pHeightPre" maxlength="64">
+                    </label>
+                    <label>height
+                        <input type="number" step="any" id="pHeight" value="0">
+                    </label>
+                    <label>lift_height
+                        <input type="number" step="any" id="pLift" value="-1">
+                    </label>
+                </div>
+                <div id="pointError" class="error"></div>
+                <div class="modal-actions">
+                    <button type="button" class="ghost" data-close="pointModal">关闭</button>
+                    <button type="submit">保存 / 覆盖</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        App.renderTopbar("库位管理", "ws.html");
+        App.bindModalCloseButtons();
+        const api = App.api;
+        const role = App.user.role;
+
+        let cachedWs = [];
+        let cachedPts = [];
+        let cachedAgvs = [];
+        let editingWsUuid = null;
+        let currentWsUuid = null;
+
+        async function loadWs() {
+            const tbody = document.querySelector("#wsTable tbody");
+            tbody.innerHTML = `<tr><td colspan="10" class="muted">加载中...</td></tr>`;
+            try {
+                [cachedWs, cachedPts] = await Promise.all([
+                    api("GET", "/api/v1/ws"),
+                    api("GET", "/api/v1/pallet-types"),
+                ]);
+                const ptMap = new Map(cachedPts.map(p => [p.id, p.code]));
+                if (cachedWs.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="10" class="muted">还没有库位</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = cachedWs.map(w => `
+                    <tr>
+                        <td>${w.id}</td>
+                        <td>${App.escapeHtml(w.code)}</td>
+                        <td>${App.escapeHtml(w.name || "-")}</td>
+                        <td>${App.WS_TYPE_NAME[w.ws_type] || w.ws_type}</td>
+                        <td class="muted">
+                            ${w.allow_empty_pallet ? "空托" : ""}
+                            ${w.allow_full_material ? " 满料" : ""}
+                            ${w.allow_defect ? " 不良" : ""}
+                        </td>
+                        <td>${App.PALLET_BIND_MODE_NAME[w.bind_pallet_mode] || w.bind_pallet_mode}</td>
+                        <td class="muted">${w.pallet_type_ids.map(id => App.escapeHtml(ptMap.get(id) || id)).join(", ") || "-"}</td>
+                        <td>${w.priority}</td>
+                        <td><span class="badge ${w.is_active ? "on" : "off"}">${w.is_active ? "启用" : "禁用"}</span></td>
+                        <td class="actions">
+                            ${role === "admin" ? `
+                                <button data-act="edit"   data-uuid="${w.uuid}" class="secondary">编辑</button>
+                                <button data-act="points" data-uuid="${w.uuid}" data-name="${App.escapeHtml(w.code)}" class="secondary">AGV点位 (${w.agv_points.length})</button>
+                                <button data-act="del"    data-uuid="${w.uuid}" class="danger">删除</button>
+                            ` : `
+                                <button data-act="points" data-uuid="${w.uuid}" data-name="${App.escapeHtml(w.code)}" class="secondary">查看点位</button>
+                            `}
+                        </td>
+                    </tr>
+                `).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="10" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.getElementById("refreshBtn").onclick = loadWs;
+
+        /* ===== 新增 / 编辑 ===== */
+        document.getElementById("addBtn").onclick = async () => {
+            if (role !== "admin") return alert("只有 admin 能新增");
+            editingWsUuid = null;
+            await fillPtSelect();
+            document.getElementById("wsModalTitle").textContent = "新增库位";
+            document.getElementById("wsForm").reset();
+            document.getElementById("wsUuid").value = App.shortUuid();
+            document.getElementById("wsUuid").disabled = false;
+            document.getElementById("wsCode").disabled = false;
+            document.getElementById("wsType").value = "1";
+            document.getElementById("wsBindMode").value = "2";
+            document.getElementById("wsAllowEmpty").checked = true;
+            document.getElementById("wsAllowFull").checked = true;
+            document.getElementById("wsAllowDefect").checked = false;
+            document.getElementById("wsX").value = 0;
+            document.getElementById("wsY").value = 0;
+            document.getElementById("wsPriority").value = 100;
+            document.getElementById("wsError").textContent = "";
+            App.showModal("wsModal");
+        };
+
+        async function fillPtSelect() {
+            if (cachedPts.length === 0) cachedPts = await api("GET", "/api/v1/pallet-types");
+            document.getElementById("wsPalletTypes").innerHTML = cachedPts.map(p =>
+                `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`
+            ).join("");
+        }
+
+        document.querySelector("#wsTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const uuid = btn.dataset.uuid;
+            const act = btn.dataset.act;
+
+            if (act === "edit") {
+                const w = cachedWs.find(x => x.uuid === uuid);
+                if (!w) return;
+                editingWsUuid = uuid;
+                await fillPtSelect();
+                document.getElementById("wsModalTitle").textContent = "编辑库位 " + w.code;
+                document.getElementById("wsUuid").value = w.uuid;
+                document.getElementById("wsUuid").disabled = true;
+                document.getElementById("wsCode").value = w.code;
+                document.getElementById("wsCode").disabled = true;
+                document.getElementById("wsName").value = w.name || "";
+                document.getElementById("wsType").value = w.ws_type;
+                document.getElementById("wsBindMode").value = w.bind_pallet_mode;
+                document.getElementById("wsAllowEmpty").checked = w.allow_empty_pallet;
+                document.getElementById("wsAllowFull").checked = w.allow_full_material;
+                document.getElementById("wsAllowDefect").checked = w.allow_defect;
+                document.getElementById("wsX").value = w.coordinate_x;
+                document.getElementById("wsY").value = w.coordinate_y;
+                document.getElementById("wsPriority").value = w.priority;
+                const sel = document.getElementById("wsPalletTypes");
+                Array.from(sel.options).forEach(o => { o.selected = w.pallet_type_ids.includes(parseInt(o.value, 10)); });
+                document.getElementById("wsError").textContent = "";
+                App.showModal("wsModal");
+            } else if (act === "del") {
+                if (!confirm(`确认删除库位 ${uuid}? 关联的库存与点位会一并删除。`)) return;
+                try { await api("DELETE", `/api/v1/ws/${uuid}`); await loadWs(); }
+                catch (err) { alert(err.message); }
+            } else if (act === "points") {
+                await openPoints(uuid, btn.dataset.name);
+            }
+        });
+
+        document.getElementById("wsForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("wsError");
+            errEl.textContent = "";
+            const ptIds = Array.from(document.getElementById("wsPalletTypes").selectedOptions)
+                .map(o => parseInt(o.value, 10));
+            const payload = {
+                name: document.getElementById("wsName").value.trim() || null,
+                ws_type: parseInt(document.getElementById("wsType").value, 10),
+                bind_pallet_mode: parseInt(document.getElementById("wsBindMode").value, 10),
+                allow_empty_pallet: document.getElementById("wsAllowEmpty").checked,
+                allow_full_material: document.getElementById("wsAllowFull").checked,
+                allow_defect: document.getElementById("wsAllowDefect").checked,
+                coordinate_x: parseFloat(document.getElementById("wsX").value) || 0,
+                coordinate_y: parseFloat(document.getElementById("wsY").value) || 0,
+                priority: parseInt(document.getElementById("wsPriority").value, 10) || 0,
+                pallet_type_ids: ptIds,
+            };
+            try {
+                if (editingWsUuid) {
+                    await api("PATCH", `/api/v1/ws/${editingWsUuid}`, payload);
+                } else {
+                    payload.uuid = document.getElementById("wsUuid").value.trim();
+                    payload.code = document.getElementById("wsCode").value.trim();
+                    await api("POST", "/api/v1/ws", payload);
+                }
+                App.hideModal("wsModal");
+                await loadWs();
+            } catch (err) {
+                errEl.textContent = err.message;
+            }
+        });
+
+        /* ===== AGV 点位子弹窗 ===== */
+        async function openPoints(uuid, code) {
+            currentWsUuid = uuid;
+            document.getElementById("pointModalTitle").textContent = `AGV 点位 · 库位 ${code}`;
+            document.getElementById("pointModalSub").textContent = `WS uuid: ${uuid}`;
+            document.getElementById("pointForm").reset();
+            document.getElementById("pHeight").value = 0;
+            document.getElementById("pLift").value = -1;
+            document.getElementById("pointError").textContent = "";
+
+            if (cachedAgvs.length === 0) {
+                cachedAgvs = await api("GET", "/api/v1/agvs");
+            }
+            document.getElementById("pAgvId").innerHTML = cachedAgvs.map(a =>
+                `<option value="${a.id}">${App.escapeHtml(a.name)} (${App.escapeHtml(a.uuid)})</option>`
+            ).join("");
+
+            await loadPoints();
+            App.showModal("pointModal");
+        }
+
+        async function loadPoints() {
+            const tbody = document.querySelector("#pointTable tbody");
+            tbody.innerHTML = `<tr><td colspan="8" class="muted">加载中...</td></tr>`;
+            try {
+                const items = await api("GET", `/api/v1/ws/${currentWsUuid}/agv-points`);
+                const agvMap = new Map(cachedAgvs.map(a => [a.id, a.name]));
+                if (items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="muted">还没有点位</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = items.map(p => `
+                    <tr>
+                        <td>${p.id}</td>
+                        <td>${App.escapeHtml(agvMap.get(p.agv_id) || p.agv_id)}</td>
+                        <td>${App.escapeHtml(p.ap)}</td>
+                        <td class="muted">${App.escapeHtml(p.pre || "-")}</td>
+                        <td class="muted">${App.escapeHtml(p.tp || "-")}</td>
+                        <td>${p.height}</td>
+                        <td>${p.lift_height}</td>
+                        <td class="actions">
+                            ${role === "admin" ? `<button data-pact="del" data-id="${p.id}" class="danger">删除</button>` : ""}
+                        </td>
+                    </tr>
+                `).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="8" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.querySelector("#pointTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-pact='del']");
+            if (!btn) return;
+            const id = btn.dataset.id;
+            if (!confirm(`确认删除点位 #${id}?`)) return;
+            try { await api("DELETE", `/api/v1/ws/${currentWsUuid}/agv-points/${id}`); await loadPoints(); }
+            catch (err) { alert(err.message); }
+        });
+
+        document.getElementById("pointForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            if (role !== "admin") return alert("只有 admin 能改");
+            const errEl = document.getElementById("pointError");
+            errEl.textContent = "";
+            const payload = {
+                agv_id: parseInt(document.getElementById("pAgvId").value, 10),
+                ap: document.getElementById("pAp").value.trim(),
+                pre: document.getElementById("pPre").value.trim() || null,
+                height_pre: document.getElementById("pHeightPre").value.trim() || null,
+                tp: document.getElementById("pTp").value.trim() || null,
+                height: parseFloat(document.getElementById("pHeight").value) || 0,
+                lift_height: parseFloat(document.getElementById("pLift").value) || -1,
+            };
+            try {
+                await api("PUT", `/api/v1/ws/${currentWsUuid}/agv-points`, payload);
+                document.getElementById("pointForm").reset();
+                document.getElementById("pHeight").value = 0;
+                document.getElementById("pLift").value = -1;
+                await loadPoints();
+                await loadWs();
+            } catch (err) { errEl.textContent = err.message; }
+        });
+
+        loadWs();
+    </script>
+</body>
+</html>

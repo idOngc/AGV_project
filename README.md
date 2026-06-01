@@ -102,19 +102,21 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 只是为了在 Vue 接入前快速验证后端功能,**Vue 上线后会整体替换掉 `app/web/`**。
 
-- 登录页 (`/web/`) → 用 `admin / admin123` 或 `operator / op123` 登录。
-- AGV 控制台 (`/web/dashboard.html`):
-  - admin 可以「新增 / 删除 AGV」;operator 只能看 + 测通信 + 下发任务。
-  - 「测通信」: 调 `POST /api/v1/agvs/{uuid}/ping`,在线显示延迟 ms,失败显示原因。
-  - 「实时状态」: `GET /api/v1/agvs/{uuid}/status`,弹窗 JSON 快照。
-  - 「下发任务」: 弹窗表单(目标点 / 类型 / operation / source_id / angle / extra_args),
-    确认后调 `POST /api/v1/tasks` 落库 + 真发到 AGV。
-- 任务历史 (`/web/tasks.html`):
-  - 列出所有任务,3 秒自动刷新(可关掉)。
-  - 按 AGV / 状态过滤。
-  - 每行「暂停 / 继续 / 取消」按钮,按状态机自动 enable/disable。
-  - 点 `#ID` 看完整 JSON 详情(含最近一次仙工 task_req 应答)。
-- token 存在浏览器 `localStorage.token` 里;401 时自动踢回登录页。
+所有页共用 `app.js` 渲染顶栏(token / 角色 / 导航 / 退出)。token 存
+`localStorage.token`,401 自动踢回登录页。
+
+| 页面 | 说明 |
+|---|---|
+| `/web/` (= `index.html`) | 登录,`admin / admin123` 或 `operator / op123` |
+| `/web/dashboard.html` | AGV 列表 + 测通信 + 实时状态 + 行内「下发任务」 |
+| `/web/materials.html` | 3 个 tab:**零件** / **托盘类型** / **零件↔托盘 绑定** |
+| `/web/ws.html` | **库位 CRUD** 表格,弹窗多选托盘类型;行内「AGV 点位」子弹窗维护每台车的 AP/pre/tp/height/liftHeight |
+| `/web/call-points.html` | **呼叫点 CRUD**,弹窗 4 个业务类型 checkbox + AGV 点位子弹窗;运行状态色块跟 `current_task_id` 联动 |
+| `/web/inventory.html` | 2 个 tab:**库位输入** (卡片网格,绑零件/空托/清空) 和 **放料图** (6 色色块对应 InventoryStatus);可开 2s 自动刷新 |
+| `/web/tasks.html` | 任务历史 + 暂停/继续/取消,3s 自动刷新 |
+
+所有需要鉴权的操作:operator 仅可查看 + 测通信 + 下发任务;
+**admin** 才能改字典(零件/托盘类型/库位/呼叫点/库存绑定)。
 
 ## 在 Swagger 上测带鉴权的接口
 
@@ -151,6 +153,47 @@ AGV (admin 可写, operator 只读)
   POST   /api/v1/tasks/{task_id}/pause   暂停 (仙工 3001)
   POST   /api/v1/tasks/{task_id}/resume  继续 (仙工 3002)
   POST   /api/v1/tasks/{task_id}/cancel  取消 (仙工 3003)
+
+物料字典
+  GET    /api/v1/parts                   零件列表
+  POST   /api/v1/parts                   新增零件                      [admin]
+  GET    /api/v1/parts/{uuid}            零件详情
+  PATCH  /api/v1/parts/{uuid}            更新                          [admin]
+  DELETE /api/v1/parts/{uuid}            删除                          [admin]
+  GET    /api/v1/parts/mappings/list     零件↔托盘类型 绑定列表
+  POST   /api/v1/parts/mappings          绑定 零件↔托盘类型             [admin]
+  DELETE /api/v1/parts/mappings          解绑                          [admin]
+  GET    /api/v1/pallet-types            托盘类型列表
+  POST   /api/v1/pallet-types            新增托盘类型                  [admin]
+  GET    /api/v1/pallet-types/{uuid}     托盘类型详情
+  PATCH  /api/v1/pallet-types/{uuid}     更新                          [admin]
+  DELETE /api/v1/pallet-types/{uuid}     删除                          [admin]
+
+设施字典
+  GET    /api/v1/ws                      库位列表 (含 pallet_type_ids / agv_points)
+  POST   /api/v1/ws                      新增库位 (同步创建 Inventory)  [admin]
+  GET    /api/v1/ws/{uuid}               库位详情
+  PATCH  /api/v1/ws/{uuid}               更新 (pallet_type_ids 全量替换) [admin]
+  DELETE /api/v1/ws/{uuid}               删除                          [admin]
+  GET    /api/v1/ws/{uuid}/agv-points    该库位的 AGV 点位列表
+  PUT    /api/v1/ws/{uuid}/agv-points    新增/更新一台 AGV 在该库位的点位 [admin]
+  DELETE /api/v1/ws/{uuid}/agv-points/{point_id}  删除                  [admin]
+
+  GET    /api/v1/call-points                       呼叫点列表
+  POST   /api/v1/call-points                       新增呼叫点            [admin]
+  GET    /api/v1/call-points/{uuid}                呼叫点详情
+  PATCH  /api/v1/call-points/{uuid}                更新                  [admin]
+  DELETE /api/v1/call-points/{uuid}                删除                  [admin]
+  GET    /api/v1/call-points/{uuid}/agv-points     该呼叫点的 AGV 点位
+  PUT    /api/v1/call-points/{uuid}/agv-points     新增/更新点位         [admin]
+  DELETE /api/v1/call-points/{uuid}/agv-points/{point_id}  删除         [admin]
+
+库存
+  GET    /api/v1/inventory               列表 / 放料图 (?status=, ?part_id=, ?ws_id=)
+  GET    /api/v1/inventory/by-ws/{ws_uuid}        按库位 uuid 查
+  POST   /api/v1/inventory/by-ws/{ws_uuid}/bind   绑零件 / 空托         [admin]
+  POST   /api/v1/inventory/by-ws/{ws_uuid}/clear  清空库位              [admin]
+  POST   /api/v1/inventory/{inv_id}/unlock        强制解锁              [admin]
 ```
 
 ### 任务下发参数
@@ -244,6 +287,50 @@ curl -X POST http://localhost:8000/api/v1/tasks/1/cancel -H "Authorization: Bear
 (在 `RUNNING(1)` 后插入 `PAUSED(2)`),迁移文件里已加 UPDATE 把旧值平移,
 确保旧数据语义不丢。如果你跑 `aerich upgrade` 失败要回滚,用 `aerich downgrade`。
 
+## 调度域数据模型 (P1+P2+P3)
+
+> 这一轮把"物料 / 设施 / 库存"字典先建起来,
+> P4 阶段才会加 task_template + 呼叫接口(根据零件查库存→选 AGV→下发)。
+
+**物料域**
+
+| 表 | 说明 |
+|---|---|
+| `part` | 零件字典,`code` = PartSN |
+| `pallet_type` | 托盘类型/规格,挂 `.shelf` 识别文件 + `agv_mode` (该托盘只能由哪种 AGV 搬) |
+| `part_pallet_mapping` | 零件↔托盘类型 多对多 |
+
+**设施域** (PLC 字段全部移除,需要时再回填)
+
+| 表 | 说明 |
+|---|---|
+| `ws` | 库位。`allow_empty_pallet / allow_full_material / allow_defect` 三个 bool 代替原 wsTypeChild 数组 |
+| `ws_agv_point` | 库位在每台 AGV 上的导航点位 (ap / pre / tp / height / lift_height) |
+| `ws_pallet_type` | 库位↔托盘类型 多对多 |
+| `call_point` | 呼叫点。运行时 `run_status` + `current_task_id` 直接挂在主表,不另建工位状态表 |
+| `call_point_agv_point` | 呼叫点在每台 AGV 上的导航点位 |
+| `call_point_business_type` | 呼叫点↔支持的业务类型(4 种)多对多 |
+
+**业务类型枚举** (`BusinessType`,4 个值 = 4 种任务模板入口):
+
+| 值 | 名称 | 含义 |
+|---|---|---|
+| 1 | `SEND_EMPTY_TO_WS` | 呼叫点 → 库位 送空托 |
+| 2 | `FETCH_MATERIAL_TO_CP` | 库位 → 呼叫点 送料 |
+| 3 | `FETCH_EMPTY_TO_CP` | 库位 → 呼叫点 送空托 |
+| 4 | `SEND_MATERIAL_TO_WS` | 呼叫点 → 库位 送料 |
+
+**库存域**
+
+| 表 | 说明 |
+|---|---|
+| `inventory` | 与 `ws` 1:1,记 `part` / `pallet_type` / `status`,带 `is_locked` 防并发 |
+
+`InventoryStatus`: `0=DISABLED, 1=EMPTY_SLOT, 2=EMPTY_PALLET, 3=FULL_MATERIAL, 4=PENDING_ALLOC, 5=IN_USE`
+(对应前端放料图 7 色块)
+
+> 创建 WS 时会自动建一行 Inventory(EMPTY_SLOT),无需手工初始化。
+
 ## 当前进度
 
 - [x] 项目骨架 / 仙工协议层 / TCP 客户端 / 连接池
@@ -253,8 +340,12 @@ curl -X POST http://localhost:8000/api/v1/tasks/1/cancel -H "Authorization: Bear
 - [x] 任务下发 (`POST /tasks`) + pause/resume/cancel + 后台轮询对账
 - [x] 任务历史页 (`/web/tasks.html`,3 秒自动刷新)
 - [x] 协议 + 客户端集成测试 (10/10 通过)
-- [ ] 呼叫点 PLC 接入 (生成"送空车 / 运物料"任务)
-- [ ] 库位 WMS / 地图数据接入
+- [x] **P1 物料字典: part / pallet_type / part_pallet_mapping**
+- [x] **P2 设施字典: ws / call_point + AGV 点位 + 多对多绑定**
+- [x] **P3 库存: inventory (随 WS 自动建,支持手动绑零件/空托)**
+- [ ] P4 业务编排: task_template 硬编码 4 模板 + 呼叫接口 (零件→库位→AGV→下发)
+- [ ] P5 锁 & 并发: inventory 真锁 + CP `current_task_id` + 任务结束回写库存
+- [ ] 呼叫点 / 库位 / 放料图 前端页 (Vue 接入前可先用简易 HTML)
 - [ ] WebSocket 实时状态推送
 - [ ] 调度层 (派车 / 交管 / 自动充电)
 - [ ] 前端 Vue (会替换掉 `app/web/`)

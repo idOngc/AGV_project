@@ -1,0 +1,388 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统-呼叫点管理</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>呼叫点管理</h1>
+        <div></div>
+    </header>
+
+    <main>
+        <div class="toolbar">
+            <h2>呼叫点 (CallPoint) 列表</h2>
+            <button class="secondary" id="refreshBtn">刷新</button>
+            <button id="addBtn">新增呼叫点</button>
+        </div>
+
+        <table id="cpTable">
+            <thead>
+                <tr>
+                    <th>#ID</th>
+                    <th>code</th>
+                    <th>名称</th>
+                    <th>功能</th>
+                    <th>托盘形态</th>
+                    <th>支持业务</th>
+                    <th>运行状态</th>
+                    <th>优先级</th>
+                    <th>启用</th>
+                    <th>操作</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+        </table>
+        <p class="muted" style="margin-top: 8px;" id="emptyHint"></p>
+    </main>
+
+    <!-- ===== 呼叫点 新增/编辑 ===== -->
+    <div class="modal-mask hidden" id="cpModal">
+        <form class="modal" id="cpForm">
+            <h3 id="cpModalTitle">新增呼叫点</h3>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label>UUID
+                    <input type="text" id="cpUuid" required maxlength="64">
+                </label>
+                <label>code
+                    <input type="text" id="cpCode" required maxlength="64" placeholder="CP-001">
+                </label>
+            </div>
+
+            <label>名称
+                <input type="text" id="cpName" maxlength="128">
+            </label>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+                <label>功能方向
+                    <select id="cpFunc">
+                        <option value="1">Load 上料</option>
+                        <option value="2">Unload 下料</option>
+                        <option value="3" selected>Load &amp; Unload</option>
+                    </select>
+                </label>
+                <label>托盘形态
+                    <select id="cpBindMode">
+                        <option value="1">母子托</option>
+                        <option value="2" selected>母托</option>
+                        <option value="3">子托</option>
+                    </select>
+                </label>
+            </div>
+
+            <label>支持的业务类型 (该呼叫点能下哪种任务)</label>
+            <div class="bt-group" id="cpBtGroup">
+                <label><input type="checkbox" name="bt" value="1"> 1. 呼叫点 → 库位 送空托</label>
+                <label><input type="checkbox" name="bt" value="2"> 2. 库位 → 呼叫点 送料</label>
+                <label><input type="checkbox" name="bt" value="3"> 3. 库位 → 呼叫点 送空托</label>
+                <label><input type="checkbox" name="bt" value="4"> 4. 呼叫点 → 库位 送料</label>
+            </div>
+
+            <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-top: 12px;">
+                <label>坐标 X
+                    <input type="number" step="any" id="cpX" value="0">
+                </label>
+                <label>坐标 Y
+                    <input type="number" step="any" id="cpY" value="0">
+                </label>
+                <label>优先级
+                    <input type="number" id="cpPriority" value="100">
+                </label>
+                <label>最大并发任务
+                    <input type="number" id="cpMax" value="1" min="1">
+                </label>
+            </div>
+
+            <div id="cpError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="cpModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ===== AGV 点位子表 ===== -->
+    <div class="modal-mask hidden" id="pointModal">
+        <div class="modal" style="max-width: 720px;">
+            <h3 id="pointModalTitle">AGV 点位</h3>
+            <p class="muted" id="pointModalSub"></p>
+
+            <table class="sub" id="pointTable">
+                <thead>
+                    <tr>
+                        <th>#</th>
+                        <th>AGV</th>
+                        <th>AP</th>
+                        <th>pre</th>
+                        <th>tp</th>
+                        <th>height</th>
+                        <th>lift</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+
+            <form id="pointForm" style="margin-top: 12px;">
+                <h4 style="font-size: 13px; color: #2a4a8a; margin-bottom: 8px;">新增 / 更新点位</h4>
+                <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px;">
+                    <label>AGV
+                        <select id="pAgvId" required></select>
+                    </label>
+                    <label>AP (必填)
+                        <input type="text" id="pAp" required maxlength="64">
+                    </label>
+                    <label>pre
+                        <input type="text" id="pPre" maxlength="64">
+                    </label>
+                    <label>tp
+                        <input type="text" id="pTp" maxlength="64">
+                    </label>
+                    <label>height_pre
+                        <input type="text" id="pHeightPre" maxlength="64">
+                    </label>
+                    <label>height
+                        <input type="number" step="any" id="pHeight" value="0">
+                    </label>
+                    <label>lift_height
+                        <input type="number" step="any" id="pLift" value="-1">
+                    </label>
+                </div>
+                <div id="pointError" class="error"></div>
+                <div class="modal-actions">
+                    <button type="button" class="ghost" data-close="pointModal">关闭</button>
+                    <button type="submit">保存 / 覆盖</button>
+                </div>
+            </form>
+        </div>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        App.renderTopbar("呼叫点管理", "call-points.html");
+        App.bindModalCloseButtons();
+        const api = App.api;
+        const role = App.user.role;
+
+        let cachedCps = [];
+        let cachedAgvs = [];
+        let editingCpUuid = null;
+        let currentCpUuid = null;
+
+        async function loadCps() {
+            const tbody = document.querySelector("#cpTable tbody");
+            tbody.innerHTML = `<tr><td colspan="10" class="muted">加载中...</td></tr>`;
+            try {
+                cachedCps = await api("GET", "/api/v1/call-points");
+                if (cachedCps.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="10" class="muted">还没有呼叫点</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = cachedCps.map(c => {
+                    const status = App.CP_RUN_STATUS[c.run_status] || { name: c.run_status, color: "#888" };
+                    return `
+                    <tr>
+                        <td>${c.id}</td>
+                        <td>${App.escapeHtml(c.code)}</td>
+                        <td>${App.escapeHtml(c.name || "-")}</td>
+                        <td>${App.FUNC_MODE_NAME[c.func_mode] || c.func_mode}</td>
+                        <td>${App.PALLET_BIND_MODE_NAME[c.bind_pallet_mode] || c.bind_pallet_mode}</td>
+                        <td class="muted">${c.business_types.map(bt => "#" + bt).join(", ") || "-"}</td>
+                        <td>
+                            <span class="badge" style="background:${status.color};color:#fff;">${status.name}</span>
+                            ${c.current_task_id ? `<span class="muted">→ task #${c.current_task_id}</span>` : ""}
+                        </td>
+                        <td>${c.priority}</td>
+                        <td><span class="badge ${c.is_active ? "on" : "off"}">${c.is_active ? "启用" : "禁用"}</span></td>
+                        <td class="actions">
+                            ${role === "admin" ? `
+                                <button data-act="edit"   data-uuid="${c.uuid}" class="secondary">编辑</button>
+                                <button data-act="points" data-uuid="${c.uuid}" data-name="${App.escapeHtml(c.code)}" class="secondary">AGV点位 (${c.agv_points.length})</button>
+                                <button data-act="del"    data-uuid="${c.uuid}" class="danger">删除</button>
+                            ` : `
+                                <button data-act="points" data-uuid="${c.uuid}" data-name="${App.escapeHtml(c.code)}" class="secondary">查看点位</button>
+                            `}
+                        </td>
+                    </tr>`;
+                }).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="10" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.getElementById("refreshBtn").onclick = loadCps;
+
+        document.getElementById("addBtn").onclick = () => {
+            if (role !== "admin") return alert("只有 admin 能新增");
+            editingCpUuid = null;
+            document.getElementById("cpModalTitle").textContent = "新增呼叫点";
+            document.getElementById("cpForm").reset();
+            document.getElementById("cpUuid").value = App.shortUuid();
+            document.getElementById("cpUuid").disabled = false;
+            document.getElementById("cpCode").disabled = false;
+            document.getElementById("cpFunc").value = "3";
+            document.getElementById("cpBindMode").value = "2";
+            document.querySelectorAll("#cpBtGroup input[name=bt]").forEach(cb => cb.checked = false);
+            document.getElementById("cpX").value = 0;
+            document.getElementById("cpY").value = 0;
+            document.getElementById("cpPriority").value = 100;
+            document.getElementById("cpMax").value = 1;
+            document.getElementById("cpError").textContent = "";
+            App.showModal("cpModal");
+        };
+
+        document.querySelector("#cpTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const uuid = btn.dataset.uuid;
+            const act = btn.dataset.act;
+            if (act === "edit") {
+                const c = cachedCps.find(x => x.uuid === uuid);
+                if (!c) return;
+                editingCpUuid = uuid;
+                document.getElementById("cpModalTitle").textContent = "编辑呼叫点 " + c.code;
+                document.getElementById("cpUuid").value = c.uuid;
+                document.getElementById("cpUuid").disabled = true;
+                document.getElementById("cpCode").value = c.code;
+                document.getElementById("cpCode").disabled = true;
+                document.getElementById("cpName").value = c.name || "";
+                document.getElementById("cpFunc").value = c.func_mode;
+                document.getElementById("cpBindMode").value = c.bind_pallet_mode;
+                document.querySelectorAll("#cpBtGroup input[name=bt]").forEach(cb => {
+                    cb.checked = c.business_types.includes(parseInt(cb.value, 10));
+                });
+                document.getElementById("cpX").value = c.coordinate_x;
+                document.getElementById("cpY").value = c.coordinate_y;
+                document.getElementById("cpPriority").value = c.priority;
+                document.getElementById("cpMax").value = c.max_concurrent_tasks;
+                document.getElementById("cpError").textContent = "";
+                App.showModal("cpModal");
+            } else if (act === "del") {
+                if (!confirm(`确认删除呼叫点 ${uuid}?`)) return;
+                try { await api("DELETE", `/api/v1/call-points/${uuid}`); await loadCps(); }
+                catch (err) { alert(err.message); }
+            } else if (act === "points") {
+                await openPoints(uuid, btn.dataset.name);
+            }
+        });
+
+        document.getElementById("cpForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("cpError");
+            errEl.textContent = "";
+            const bts = Array.from(document.querySelectorAll("#cpBtGroup input[name=bt]:checked"))
+                .map(cb => parseInt(cb.value, 10));
+            const payload = {
+                name: document.getElementById("cpName").value.trim() || null,
+                func_mode: parseInt(document.getElementById("cpFunc").value, 10),
+                bind_pallet_mode: parseInt(document.getElementById("cpBindMode").value, 10),
+                coordinate_x: parseFloat(document.getElementById("cpX").value) || 0,
+                coordinate_y: parseFloat(document.getElementById("cpY").value) || 0,
+                priority: parseInt(document.getElementById("cpPriority").value, 10) || 0,
+                max_concurrent_tasks: parseInt(document.getElementById("cpMax").value, 10) || 1,
+                business_types: bts,
+            };
+            try {
+                if (editingCpUuid) {
+                    await api("PATCH", `/api/v1/call-points/${editingCpUuid}`, payload);
+                } else {
+                    payload.uuid = document.getElementById("cpUuid").value.trim();
+                    payload.code = document.getElementById("cpCode").value.trim();
+                    await api("POST", "/api/v1/call-points", payload);
+                }
+                App.hideModal("cpModal");
+                await loadCps();
+            } catch (err) { errEl.textContent = err.message; }
+        });
+
+        /* ===== AGV 点位子弹窗 (与 ws.html 同结构) ===== */
+        async function openPoints(uuid, code) {
+            currentCpUuid = uuid;
+            document.getElementById("pointModalTitle").textContent = `AGV 点位 · 呼叫点 ${code}`;
+            document.getElementById("pointModalSub").textContent = `CP uuid: ${uuid}`;
+            document.getElementById("pointForm").reset();
+            document.getElementById("pHeight").value = 0;
+            document.getElementById("pLift").value = -1;
+            document.getElementById("pointError").textContent = "";
+
+            if (cachedAgvs.length === 0) {
+                cachedAgvs = await api("GET", "/api/v1/agvs");
+            }
+            document.getElementById("pAgvId").innerHTML = cachedAgvs.map(a =>
+                `<option value="${a.id}">${App.escapeHtml(a.name)} (${App.escapeHtml(a.uuid)})</option>`
+            ).join("");
+
+            await loadPoints();
+            App.showModal("pointModal");
+        }
+
+        async function loadPoints() {
+            const tbody = document.querySelector("#pointTable tbody");
+            tbody.innerHTML = `<tr><td colspan="8" class="muted">加载中...</td></tr>`;
+            try {
+                const items = await api("GET", `/api/v1/call-points/${currentCpUuid}/agv-points`);
+                const agvMap = new Map(cachedAgvs.map(a => [a.id, a.name]));
+                if (items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="muted">还没有点位</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = items.map(p => `
+                    <tr>
+                        <td>${p.id}</td>
+                        <td>${App.escapeHtml(agvMap.get(p.agv_id) || p.agv_id)}</td>
+                        <td>${App.escapeHtml(p.ap)}</td>
+                        <td class="muted">${App.escapeHtml(p.pre || "-")}</td>
+                        <td class="muted">${App.escapeHtml(p.tp || "-")}</td>
+                        <td>${p.height}</td>
+                        <td>${p.lift_height}</td>
+                        <td class="actions">
+                            ${role === "admin" ? `<button data-pact="del" data-id="${p.id}" class="danger">删除</button>` : ""}
+                        </td>
+                    </tr>
+                `).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="8" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.querySelector("#pointTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-pact='del']");
+            if (!btn) return;
+            const id = btn.dataset.id;
+            if (!confirm(`确认删除点位 #${id}?`)) return;
+            try { await api("DELETE", `/api/v1/call-points/${currentCpUuid}/agv-points/${id}`); await loadPoints(); }
+            catch (err) { alert(err.message); }
+        });
+
+        document.getElementById("pointForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            if (role !== "admin") return alert("只有 admin 能改");
+            const errEl = document.getElementById("pointError");
+            errEl.textContent = "";
+            const payload = {
+                agv_id: parseInt(document.getElementById("pAgvId").value, 10),
+                ap: document.getElementById("pAp").value.trim(),
+                pre: document.getElementById("pPre").value.trim() || null,
+                height_pre: document.getElementById("pHeightPre").value.trim() || null,
+                tp: document.getElementById("pTp").value.trim() || null,
+                height: parseFloat(document.getElementById("pHeight").value) || 0,
+                lift_height: parseFloat(document.getElementById("pLift").value) || -1,
+            };
+            try {
+                await api("PUT", `/api/v1/call-points/${currentCpUuid}/agv-points`, payload);
+                document.getElementById("pointForm").reset();
+                document.getElementById("pHeight").value = 0;
+                document.getElementById("pLift").value = -1;
+                await loadPoints();
+                await loadCps();
+            } catch (err) { errEl.textContent = err.message; }
+        });
+
+        loadCps();
+    </script>
+</body>
+</html>

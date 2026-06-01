@@ -6,7 +6,32 @@
 """
 
 from app.models.agv import AGV
+from app.models.facility import (
+    CallPoint,
+    CallPointAgvPoint,
+    CallPointBusinessTypeBinding,
+    WS,
+    WSAgvPoint,
+    WSPalletTypeBinding,
+)
+from app.models.inventory import Inventory
+from app.models.material import PalletType, Part, PartPalletMapping
 from app.models.task import Task
 from app.models.user import Role, User
 
-__all__ = ["User", "Role", "AGV", "Task"]
+__all__ = [
+    "User",
+    "Role",
+    "AGV",
+    "Task",
+    "Part",
+    "PalletType",
+    "PartPalletMapping",
+    "WS",
+    "WSAgvPoint",
+    "WSPalletTypeBinding",
+    "CallPoint",
+    "CallPointAgvPoint",
+    "CallPointBusinessTypeBinding",
+    "Inventory",
+]

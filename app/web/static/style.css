@@ -300,3 +300,219 @@ pre {
     color: #888;
     font-size: 12px;
 }
+
+/* Tab 切换条 */
+.tabs {
+    display: flex;
+    gap: 4px;
+    margin-bottom: 16px;
+    border-bottom: 1px solid #e3e6ec;
+}
+
+.tabs .tab {
+    padding: 8px 16px;
+    cursor: pointer;
+    font-size: 13px;
+    color: #555;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+}
+
+.tabs .tab:hover {
+    color: #2a4a8a;
+}
+
+.tabs .tab.active {
+    color: #2a4a8a;
+    border-bottom-color: #2a4a8a;
+    font-weight: 500;
+}
+
+.tab-panel {
+    display: none;
+}
+
+.tab-panel.active {
+    display: block;
+}
+
+/* 卡片网格 (用于库位输入 / 呼叫点输入) */
+.card-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 12px;
+}
+
+.slot-card {
+    background: #fff;
+    border: 2px solid #28a745;
+    border-radius: 6px;
+    padding: 12px;
+    font-size: 12px;
+    transition: box-shadow 0.15s;
+}
+
+.slot-card:hover {
+    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.18);
+}
+
+.slot-card .slot-head {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    margin-bottom: 10px;
+}
+
+.slot-card .slot-no {
+    font-size: 16px;
+    font-weight: 600;
+    color: #333;
+}
+
+.slot-card .slot-tag {
+    font-size: 11px;
+    color: #888;
+    text-align: right;
+}
+
+.slot-card .slot-row {
+    display: flex;
+    align-items: center;
+    margin-bottom: 6px;
+    gap: 6px;
+}
+
+.slot-card .slot-row label {
+    margin: 0;
+    flex: 0 0 50px;
+    color: #666;
+}
+
+.slot-card .slot-row input,
+.slot-card .slot-row select {
+    margin: 0;
+    flex: 1;
+    padding: 4px 6px;
+    font-size: 12px;
+}
+
+.slot-card .slot-actions {
+    margin-top: 8px;
+    display: flex;
+    gap: 4px;
+}
+
+.slot-card .slot-actions button {
+    flex: 1;
+    padding: 5px 8px;
+    font-size: 12px;
+}
+
+/* 放料图色块 (库存) - 严格对应业务方截图配色 */
+.map-legend {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 12px;
+    align-items: center;
+    flex-wrap: wrap;
+}
+
+.map-legend .lg {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    color: #555;
+}
+
+.map-legend .lg-color {
+    display: inline-block;
+    width: 14px;
+    height: 14px;
+    border-radius: 2px;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+}
+
+.map-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(160px, 1fr));
+    gap: 6px;
+}
+
+.map-cell {
+    border-radius: 4px;
+    padding: 8px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    border: 1px solid rgba(0, 0, 0, 0.08);
+    min-height: 48px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    transition: transform 0.1s;
+}
+
+.map-cell:hover {
+    transform: translateY(-1px);
+}
+
+.map-cell .mc-no {
+    font-weight: 600;
+}
+
+.map-cell .mc-part {
+    font-size: 11px;
+    text-align: right;
+    line-height: 1.2;
+    word-break: break-all;
+}
+
+/* 6 种库存状态色 - 对应 InventoryStatus 与 WS.is_active */
+.inv-DISABLED      { background: #9aa0a6; color: #fff; }   /* 未启用 */
+.inv-EMPTY_SLOT    { background: #ffffff; color: #555; }   /* 空库位 */
+.inv-EMPTY_PALLET  { background: #66c2a5; color: #fff; }   /* 只有母托 */
+.inv-FULL_MATERIAL { background: #5dd1ce; color: #fff; }   /* 有托盘有料 */
+.inv-PENDING_ALLOC { background: #ed4858; color: #fff; }   /* 待分配 */
+.inv-IN_USE        { background: #f4c44b; color: #fff; }   /* 有托盘无料 / 占用 */
+
+/* 子表格 (弹窗内用,例如 AGV 点位列表) */
+table.sub {
+    margin-top: 8px;
+    box-shadow: none;
+    border: 1px solid #eef0f4;
+    border-radius: 4px;
+}
+
+table.sub th,
+table.sub td {
+    padding: 6px 8px;
+    font-size: 12px;
+}
+
+/* 业务类型 checkbox 组 */
+.bt-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 4px;
+    border: 1px solid #d0d5dd;
+    border-radius: 4px;
+    padding: 8px 12px;
+}
+
+.bt-group label {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin: 0;
+    font-size: 13px;
+    color: #333;
+    cursor: pointer;
+}
+
+.bt-group input[type="checkbox"] {
+    width: auto;
+    margin: 0;
+    display: inline;
+}

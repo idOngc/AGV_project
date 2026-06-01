@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统-物料管理</title>
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    <header class="topbar">
+        <h1>物料管理</h1>
+        <div></div>
+    </header>
+
+    <main>
+        <div class="tabs">
+            <div class="tab active" data-tab="part">零件</div>
+            <div class="tab" data-tab="palletType">托盘类型</div>
+            <div class="tab" data-tab="mapping">零件↔托盘 绑定</div>
+        </div>
+
+        <!-- ===================== 零件 ===================== -->
+        <div class="tab-panel active" data-panel="part">
+            <div class="toolbar">
+                <h2>零件列表</h2>
+                <button class="secondary" id="partRefresh">刷新</button>
+                <button id="partAddBtn">新增零件</button>
+            </div>
+            <table id="partTable">
+                <thead>
+                    <tr>
+                        <th>#ID</th>
+                        <th>UUID</th>
+                        <th>零件号 (code)</th>
+                        <th>品名</th>
+                        <th>描述</th>
+                        <th>启用</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- ===================== 托盘类型 ===================== -->
+        <div class="tab-panel" data-panel="palletType">
+            <div class="toolbar">
+                <h2>托盘类型列表</h2>
+                <button class="secondary" id="ptRefresh">刷新</button>
+                <button id="ptAddBtn">新增托盘类型</button>
+            </div>
+            <table id="ptTable">
+                <thead>
+                    <tr>
+                        <th>#ID</th>
+                        <th>UUID</th>
+                        <th>编码 (code)</th>
+                        <th>名称</th>
+                        <th>AGV 类型</th>
+                        <th>识别文件</th>
+                        <th>启用</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+
+        <!-- ===================== 零件↔托盘 ===================== -->
+        <div class="tab-panel" data-panel="mapping">
+            <div class="toolbar">
+                <h2>零件 ↔ 托盘类型 绑定</h2>
+                <button class="secondary" id="mapRefresh">刷新</button>
+                <button id="mapAddBtn">新增绑定</button>
+            </div>
+            <table id="mapTable">
+                <thead>
+                    <tr>
+                        <th>#ID</th>
+                        <th>零件 ID</th>
+                        <th>零件 code</th>
+                        <th>托盘类型 ID</th>
+                        <th>托盘类型 code</th>
+                        <th>启用</th>
+                        <th>操作</th>
+                    </tr>
+                </thead>
+                <tbody></tbody>
+            </table>
+        </div>
+    </main>
+
+    <!-- ===== 零件新增/编辑弹窗 ===== -->
+    <div class="modal-mask hidden" id="partModal">
+        <form class="modal" id="partForm">
+            <h3 id="partModalTitle">新增零件</h3>
+            <label>UUID
+                <input type="text" id="partUuid" required maxlength="64">
+            </label>
+            <label>零件号 (PartSN)
+                <input type="text" id="partCode" required maxlength="64" placeholder="K00821 5238662">
+            </label>
+            <label>品名
+                <input type="text" id="partName" maxlength="128">
+            </label>
+            <label>描述
+                <input type="text" id="partDesc" maxlength="512">
+            </label>
+            <div id="partError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="partModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ===== 托盘类型新增/编辑弹窗 ===== -->
+    <div class="modal-mask hidden" id="ptModal">
+        <form class="modal" id="ptForm">
+            <h3 id="ptModalTitle">新增托盘类型</h3>
+            <label>UUID
+                <input type="text" id="ptUuid" required maxlength="64">
+            </label>
+            <label>编码 (code)
+                <input type="text" id="ptCode" required maxlength="64" placeholder="Kitting / P2托盘">
+            </label>
+            <label>名称
+                <input type="text" id="ptName" maxlength="128">
+            </label>
+            <label>AGV 类型 (该托盘由哪种车搬)
+                <select id="ptAgvMode">
+                    <option value="1">叉车</option>
+                    <option value="2" selected>顶升车</option>
+                    <option value="3">拖车</option>
+                    <option value="4">翻转车</option>
+                </select>
+            </label>
+            <label>仙工识别文件路径 (.shelf)
+                <input type="text" id="ptFile" maxlength="256" placeholder="/cfg/kitting.shelf">
+            </label>
+            <div id="ptError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="ptModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ===== 绑定弹窗 ===== -->
+    <div class="modal-mask hidden" id="mapModal">
+        <form class="modal" id="mapForm">
+            <h3>新增 零件↔托盘类型 绑定</h3>
+            <label>零件
+                <select id="mapPart" required></select>
+            </label>
+            <label>托盘类型
+                <select id="mapPt" required></select>
+            </label>
+            <div id="mapError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="mapModal">取消</button>
+                <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        App.renderTopbar("物料管理", "materials.html");
+        App.bindModalCloseButtons();
+        App.bindTabs();
+        const api = App.api;
+        const role = App.user.role;
+
+        let cachedParts = [];
+        let cachedPts = [];
+        let editingPartUuid = null;
+        let editingPtUuid = null;
+
+        /* ========================= 零件 ========================= */
+        async function loadParts() {
+            const tbody = document.querySelector("#partTable tbody");
+            tbody.innerHTML = `<tr><td colspan="7" class="muted">加载中...</td></tr>`;
+            try {
+                cachedParts = await api("GET", "/api/v1/parts");
+                if (cachedParts.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="7" class="muted">还没有零件,点右上「新增零件」</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = cachedParts.map(p => `
+                    <tr>
+                        <td>${p.id}</td>
+                        <td><code>${App.escapeHtml(p.uuid)}</code></td>
+                        <td>${App.escapeHtml(p.code)}</td>
+                        <td>${App.escapeHtml(p.name || "-")}</td>
+                        <td class="muted">${App.escapeHtml(p.description || "-")}</td>
+                        <td><span class="badge ${p.is_active ? "on" : "off"}">${p.is_active ? "启用" : "禁用"}</span></td>
+                        <td class="actions">
+                            ${role === "admin" ? `
+                                <button data-act="partEdit"   data-uuid="${p.uuid}" class="secondary">编辑</button>
+                                <button data-act="partDelete" data-uuid="${p.uuid}" class="danger">删除</button>
+                            ` : ""}
+                        </td>
+                    </tr>
+                `).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.getElementById("partRefresh").onclick = loadParts;
+
+        document.getElementById("partAddBtn").onclick = () => {
+            if (role !== "admin") return alert("只有 admin 能新增");
+            editingPartUuid = null;
+            document.getElementById("partModalTitle").textContent = "新增零件";
+            document.getElementById("partForm").reset();
+            document.getElementById("partUuid").value = App.shortUuid();
+            document.getElementById("partUuid").disabled = false;
+            document.getElementById("partError").textContent = "";
+            App.showModal("partModal");
+        };
+
+        document.querySelector("#partTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const uuid = btn.dataset.uuid;
+            const act = btn.dataset.act;
+            if (act === "partEdit") {
+                const p = cachedParts.find(x => x.uuid === uuid);
+                if (!p) return;
+                editingPartUuid = uuid;
+                document.getElementById("partModalTitle").textContent = "编辑零件 " + p.code;
+                document.getElementById("partUuid").value = p.uuid;
+                document.getElementById("partUuid").disabled = true;
+                document.getElementById("partCode").value = p.code;
+                document.getElementById("partName").value = p.name || "";
+                document.getElementById("partDesc").value = p.description || "";
+                document.getElementById("partError").textContent = "";
+                App.showModal("partModal");
+            } else if (act === "partDelete") {
+                if (!confirm(`确认删除零件 ${uuid}? 关联的绑定关系会一并删除。`)) return;
+                try { await api("DELETE", `/api/v1/parts/${uuid}`); await loadParts(); }
+                catch (err) { alert(err.message); }
+            }
+        });
+
+        document.getElementById("partForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("partError");
+            errEl.textContent = "";
+            try {
+                if (editingPartUuid) {
+                    const payload = {
+                        name: document.getElementById("partName").value.trim() || null,
+                        description: document.getElementById("partDesc").value.trim() || null,
+                    };
+                    await api("PATCH", `/api/v1/parts/${editingPartUuid}`, payload);
+                } else {
+                    const payload = {
+                        uuid: document.getElementById("partUuid").value.trim(),
+                        code: document.getElementById("partCode").value.trim(),
+                        name: document.getElementById("partName").value.trim() || null,
+                        description: document.getElementById("partDesc").value.trim() || null,
+                    };
+                    await api("POST", "/api/v1/parts", payload);
+                }
+                App.hideModal("partModal");
+                await loadParts();
+            } catch (err) {
+                errEl.textContent = err.message;
+            }
+        });
+
+        /* ========================= 托盘类型 ========================= */
+        async function loadPts() {
+            const tbody = document.querySelector("#ptTable tbody");
+            tbody.innerHTML = `<tr><td colspan="8" class="muted">加载中...</td></tr>`;
+            try {
+                cachedPts = await api("GET", "/api/v1/pallet-types");
+                if (cachedPts.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="8" class="muted">还没有托盘类型</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = cachedPts.map(p => `
+                    <tr>
+                        <td>${p.id}</td>
+                        <td><code>${App.escapeHtml(p.uuid)}</code></td>
+                        <td>${App.escapeHtml(p.code)}</td>
+                        <td>${App.escapeHtml(p.name || "-")}</td>
+                        <td>${App.AGV_MODE_NAME[p.agv_mode] || p.agv_mode}</td>
+                        <td class="muted">${App.escapeHtml(p.file_recognition || "-")}</td>
+                        <td><span class="badge ${p.is_active ? "on" : "off"}">${p.is_active ? "启用" : "禁用"}</span></td>
+                        <td class="actions">
+                            ${role === "admin" ? `
+                                <button data-act="ptEdit"   data-uuid="${p.uuid}" class="secondary">编辑</button>
+                                <button data-act="ptDelete" data-uuid="${p.uuid}" class="danger">删除</button>
+                            ` : ""}
+                        </td>
+                    </tr>
+                `).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="8" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.getElementById("ptRefresh").onclick = loadPts;
+
+        document.getElementById("ptAddBtn").onclick = () => {
+            if (role !== "admin") return alert("只有 admin 能新增");
+            editingPtUuid = null;
+            document.getElementById("ptModalTitle").textContent = "新增托盘类型";
+            document.getElementById("ptForm").reset();
+            document.getElementById("ptUuid").value = App.shortUuid();
+            document.getElementById("ptUuid").disabled = false;
+            document.getElementById("ptAgvMode").value = "2";
+            document.getElementById("ptError").textContent = "";
+            App.showModal("ptModal");
+        };
+
+        document.querySelector("#ptTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-act]");
+            if (!btn) return;
+            const uuid = btn.dataset.uuid;
+            const act = btn.dataset.act;
+            if (act === "ptEdit") {
+                const p = cachedPts.find(x => x.uuid === uuid);
+                if (!p) return;
+                editingPtUuid = uuid;
+                document.getElementById("ptModalTitle").textContent = "编辑托盘类型 " + p.code;
+                document.getElementById("ptUuid").value = p.uuid;
+                document.getElementById("ptUuid").disabled = true;
+                document.getElementById("ptCode").value = p.code;
+                document.getElementById("ptName").value = p.name || "";
+                document.getElementById("ptAgvMode").value = p.agv_mode;
+                document.getElementById("ptFile").value = p.file_recognition || "";
+                document.getElementById("ptError").textContent = "";
+                App.showModal("ptModal");
+            } else if (act === "ptDelete") {
+                if (!confirm(`确认删除托盘类型 ${uuid}?`)) return;
+                try { await api("DELETE", `/api/v1/pallet-types/${uuid}`); await loadPts(); }
+                catch (err) { alert(err.message); }
+            }
+        });
+
+        document.getElementById("ptForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("ptError");
+            errEl.textContent = "";
+            try {
+                if (editingPtUuid) {
+                    const payload = {
+                        name: document.getElementById("ptName").value.trim() || null,
+                        agv_mode: parseInt(document.getElementById("ptAgvMode").value, 10),
+                        file_recognition: document.getElementById("ptFile").value.trim() || null,
+                    };
+                    await api("PATCH", `/api/v1/pallet-types/${editingPtUuid}`, payload);
+                } else {
+                    const payload = {
+                        uuid: document.getElementById("ptUuid").value.trim(),
+                        code: document.getElementById("ptCode").value.trim(),
+                        name: document.getElementById("ptName").value.trim() || null,
+                        agv_mode: parseInt(document.getElementById("ptAgvMode").value, 10),
+                        file_recognition: document.getElementById("ptFile").value.trim() || null,
+                    };
+                    await api("POST", "/api/v1/pallet-types", payload);
+                }
+                App.hideModal("ptModal");
+                await loadPts();
+            } catch (err) {
+                errEl.textContent = err.message;
+            }
+        });
+
+        /* ========================= 零件↔托盘 ========================= */
+        async function loadMappings() {
+            const tbody = document.querySelector("#mapTable tbody");
+            tbody.innerHTML = `<tr><td colspan="7" class="muted">加载中...</td></tr>`;
+            try {
+                // 先确保有最新 part/pt 缓存
+                if (cachedParts.length === 0) cachedParts = await api("GET", "/api/v1/parts");
+                if (cachedPts.length === 0)   cachedPts   = await api("GET", "/api/v1/pallet-types");
+                const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
+                const ptMap   = new Map(cachedPts.map(p => [p.id, p.code]));
+
+                const items = await api("GET", "/api/v1/parts/mappings/list");
+                if (items.length === 0) {
+                    tbody.innerHTML = `<tr><td colspan="7" class="muted">还没有绑定关系</td></tr>`;
+                    return;
+                }
+                tbody.innerHTML = items.map(m => `
+                    <tr>
+                        <td>${m.id}</td>
+                        <td>${m.part_id}</td>
+                        <td>${App.escapeHtml(partMap.get(m.part_id) || "—")}</td>
+                        <td>${m.pallet_type_id}</td>
+                        <td>${App.escapeHtml(ptMap.get(m.pallet_type_id) || "—")}</td>
+                        <td><span class="badge ${m.is_active ? "on" : "off"}">${m.is_active ? "启用" : "禁用"}</span></td>
+                        <td class="actions">
+                            ${role === "admin" ? `
+                                <button data-act="mapDel"
+                                        data-part="${m.part_id}"
+                                        data-pt="${m.pallet_type_id}"
+                                        class="danger">解绑</button>
+                            ` : ""}
+                        </td>
+                    </tr>
+                `).join("");
+            } catch (e) {
+                tbody.innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
+            }
+        }
+
+        document.getElementById("mapRefresh").onclick = loadMappings;
+
+        document.getElementById("mapAddBtn").onclick = async () => {
+            if (role !== "admin") return alert("只有 admin 能新增");
+            // 重新拉 parts/pts 填下拉
+            cachedParts = await api("GET", "/api/v1/parts");
+            cachedPts   = await api("GET", "/api/v1/pallet-types");
+            const psel = document.getElementById("mapPart");
+            const tsel = document.getElementById("mapPt");
+            psel.innerHTML = cachedParts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+            tsel.innerHTML = cachedPts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+            document.getElementById("mapError").textContent = "";
+            App.showModal("mapModal");
+        };
+
+        document.querySelector("#mapTable").addEventListener("click", async e => {
+            const btn = e.target.closest("button[data-act='mapDel']");
+            if (!btn) return;
+            const partId = btn.dataset.part;
+            const ptId = btn.dataset.pt;
+            if (!confirm(`确认解绑 part=${partId}, pt=${ptId}?`)) return;
+            try {
+                await api("DELETE", `/api/v1/parts/mappings?part_id=${partId}&pallet_type_id=${ptId}`);
+                await loadMappings();
+            } catch (err) { alert(err.message); }
+        });
+
+        document.getElementById("mapForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("mapError");
+            errEl.textContent = "";
+            try {
+                await api("POST", "/api/v1/parts/mappings", {
+                    part_id: parseInt(document.getElementById("mapPart").value, 10),
+                    pallet_type_id: parseInt(document.getElementById("mapPt").value, 10),
+                });
+                App.hideModal("mapModal");
+                await loadMappings();
+            } catch (err) { errEl.textContent = err.message; }
+        });
+
+        /* 首屏 */
+        loadParts();
+        // tab 切换时按需加载
+        document.querySelector(".tabs").addEventListener("click", e => {
+            const tab = e.target.closest(".tab");
+            if (!tab) return;
+            if (tab.dataset.tab === "palletType") loadPts();
+            if (tab.dataset.tab === "mapping") loadMappings();
+        });
+    </script>
+</body>
+</html>

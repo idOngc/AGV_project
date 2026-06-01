@@ -7,14 +7,10 @@
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
-    <!-- 顶栏 -->
+    <!-- 顶栏 (内容由 app.js 渲染) -->
     <header class="topbar">
-        <h1>AGV 调度系统-控制台</h1>
-        <div>
-            <a href="tasks.html" class="topbar-link">任务历史</a>
-            <span class="user" id="userInfo"></span>
-            <button class="ghost" id="logoutBtn">退出</button>
-        </div>
+        <h1>AGV 控制台</h1>
+        <div></div>
     </header>
 
     <main>
@@ -158,57 +154,14 @@
         </form>
     </div>
 
+    <script src="app.js"></script>
     <script>
-        //  基础 API 客户端 
-        const token = localStorage.getItem("token");
-        const user = JSON.parse(localStorage.getItem("user") || "null");
-
-        if (!token || !user) {
-            window.location.replace("index.html");
-        }
-
-        document.getElementById("userInfo").textContent =
-            `${user.username} (${user.role})`;
-
-        async function api(method, path, body) {
-            const opts = {
-                method,
-                headers: {
-                    "Authorization": "Bearer " + token,
-                    "Content-Type": "application/json"
-                }
-            };
-            if (body !== undefined) opts.body = JSON.stringify(body);
-            const resp = await fetch(path, opts);
-
-            // 401 -> token 失效,踢回登录页
-            if (resp.status === 401) {
-                localStorage.clear();
-                alert("会话已失效,请重新登录");
-                window.location.replace("index.html");
-                throw new Error("401");
-            }
-
-            const text = await resp.text();
-            const data = text ? JSON.parse(text) : null;
-            if (!resp.ok) {
-                throw new Error((data && (data.msg || data.detail)) || `${resp.status} ${resp.statusText}`);
-            }
-            return data;
-        }
-
-        //     弹窗工具                                                 
-        function showModal(id) { document.getElementById(id).classList.remove("hidden"); }
-        function hideModal(id) { document.getElementById(id).classList.add("hidden"); }
-        document.querySelectorAll("[data-close]").forEach(btn => {
-            btn.addEventListener("click", () => hideModal(btn.dataset.close));
-        });
-
-        //     退出                                                  
-        document.getElementById("logoutBtn").addEventListener("click", () => {
-            localStorage.clear();
-            window.location.replace("index.html");
-        });
+        App.renderTopbar("AGV 控制台", "dashboard.html");
+        App.bindModalCloseButtons();
+        const api = App.api;
+        const user = App.user;
+        const showModal = App.showModal;
+        const hideModal = App.hideModal;
 
         //     AGV 列表加载                                            
         const MODE_NAMES = { 1: "叉车", 2: "顶升车", 3: "拖车", 4: "翻转车" };

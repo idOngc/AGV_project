@@ -36,6 +36,75 @@ class AGVOffline(AppError):
     http_status = 503
 
 
+# ---------- 物料域 ----------
+class PartNotFound(AppError):
+    code = 3001
+    msg = "零件不存在"
+    http_status = 404
+
+
+class PartConflict(AppError):
+    code = 3002
+    msg = "零件编码已存在"
+    http_status = 409
+
+
+class PalletTypeNotFound(AppError):
+    code = 3003
+    msg = "托盘类型不存在"
+    http_status = 404
+
+
+class PalletTypeConflict(AppError):
+    code = 3004
+    msg = "托盘类型编码已存在"
+    http_status = 409
+
+
+# ---------- 设施域 ----------
+class WSNotFound(AppError):
+    code = 4001
+    msg = "库位不存在"
+    http_status = 404
+
+
+class WSConflict(AppError):
+    code = 4002
+    msg = "库位编码已存在"
+    http_status = 409
+
+
+class CallPointNotFound(AppError):
+    code = 4003
+    msg = "呼叫点不存在"
+    http_status = 404
+
+
+class CallPointConflict(AppError):
+    code = 4004
+    msg = "呼叫点编码已存在"
+    http_status = 409
+
+
+# ---------- 库存域 ----------
+class InventoryNotFound(AppError):
+    code = 5001
+    msg = "库存记录不存在"
+    http_status = 404
+
+
+class InventoryLocked(AppError):
+    code = 5002
+    msg = "库存被任务锁定,操作被拒"
+    http_status = 409
+
+
+class InventoryStateError(AppError):
+    code = 5003
+    msg = "库存状态不允许此操作"
+    http_status = 409
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     @app.exception_handler(AppError)
     async def _handle_app_error(_: Request, exc: AppError):

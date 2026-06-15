@@ -12,6 +12,7 @@ from app.api.v1.endpoints import (
     pallet_type,
     part,
     task,
+    task_template,
     ws,
 )
 
@@ -19,6 +20,7 @@ api_router = APIRouter(prefix="/api/v1")
 api_router.include_router(auth.router, prefix="/auth", tags=["auth"])
 api_router.include_router(agv.router, prefix="/agvs", tags=["agv"])
 api_router.include_router(task.router, prefix="/tasks", tags=["task"])
+api_router.include_router(task_template.router, prefix="/task-templates", tags=["task"])
 
 # 物料管理
 api_router.include_router(part.router, prefix="/parts", tags=["material"])

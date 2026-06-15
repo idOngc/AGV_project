@@ -157,7 +157,9 @@ class SeerTcpClient:
             except SeerNotConnected:
                 if attempt == 2:
                     raise
-                log.warning("send_request 第 1 次失败,重连后重试: %s:%s", self.ip, self.port)
+                # 心跳 worker 每 5s 会触发对未上线 AGV 的两次失败,日志降到 DEBUG 避免刷屏;
+                # 调用方(ping/dispatch)关心连不上时,异常照样会抛上去
+                log.debug("send_request 第 1 次失败,重连后重试: %s:%s", self.ip, self.port)
                 await self._close_silent()
                 await asyncio.sleep(0.1)
         raise SeerNotConnected("不可达逻辑")

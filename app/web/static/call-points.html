@@ -76,11 +76,13 @@
 
             <label>支持的业务类型 (该呼叫点能下哪种任务)</label>
             <div class="bt-group" id="cpBtGroup">
-                <label><input type="checkbox" name="bt" value="1"> 1. 呼叫点 → 库位 送空托</label>
-                <label><input type="checkbox" name="bt" value="2"> 2. 库位 → 呼叫点 送料</label>
-                <label><input type="checkbox" name="bt" value="3"> 3. 库位 → 呼叫点 送空托</label>
-                <label><input type="checkbox" name="bt" value="4"> 4. 呼叫点 → 库位 送料</label>
+                <!-- 内容由 JS 用 App.BUSINESS_TYPE 渲染,避免硬编码漂移 -->
             </div>
+
+            <label style="margin-top: 12px;">绑定 (空) 托盘类型
+                <span class="muted">(SEND 业务时前端只能在此列表里选)</span>
+                <select id="cpPalletTypes" multiple size="4" style="margin-top:4px;"></select>
+            </label>
 
             <div style="display: grid; grid-template-columns: 1fr 1fr 1fr 1fr; gap: 8px; margin-top: 12px;">
                 <label>坐标 X
@@ -101,6 +103,46 @@
             <div class="modal-actions">
                 <button type="button" class="ghost" data-close="cpModal">取消</button>
                 <button type="submit">保存</button>
+            </div>
+        </form>
+    </div>
+
+    <!-- ===== 呼叫调度弹窗 (v2 — 仅业务关键字, 库位/托盘后端自动检索) ===== -->
+    <div class="modal-mask hidden" id="dispatchModal">
+        <form class="modal" id="dispatchForm">
+            <h3 id="dispatchModalTitle">呼叫调度</h3>
+            <p class="muted" id="dispatchModalSub" style="font-size:12px;margin-bottom:8px;"></p>
+
+            <label>业务类型
+                <select id="dpBusiness" required></select>
+            </label>
+
+            <p class="muted" id="dpHint" style="font-size:12px;margin:6px 0 0;"></p>
+
+            <div class="dispatch-fields">
+                <!-- 零件 - FETCH 类必填 -->
+                <label id="dpPartLabel" style="display:none;">
+                    <span>零件 *</span>
+                    <select id="dpPart"></select>
+                </label>
+
+                <!-- (空)托盘类型 - SEND 类必填, 仅显示 CP 已绑定的范围 -->
+                <label id="dpPalletLabel" style="display:none;">
+                    <span>托盘类型 *</span>
+                    <select id="dpPallet"></select>
+                </label>
+            </div>
+
+            <label style="margin-top:8px;">指定 AGV (留空则自动选 IDLE+电量足够)
+                <select id="dpAgv">
+                    <option value="">自动选择</option>
+                </select>
+            </label>
+
+            <div id="dispatchError" class="error"></div>
+            <div class="modal-actions">
+                <button type="button" class="ghost" data-close="dispatchModal">取消</button>
+                <button type="submit" id="dispatchSubmit">呼叫</button>
             </div>
         </form>
     </div>
@@ -170,8 +212,36 @@
 
         let cachedCps = [];
         let cachedAgvs = [];
+        let cachedPallets = null;   // CP 编辑弹窗 + 调度弹窗 共用
+        let cachedParts = null;     // 调度弹窗用
+        let cachedWs = null;        // 调度弹窗(放空托) 校验时用,目前不直接渲染
         let editingCpUuid = null;
         let currentCpUuid = null;
+
+        /* 业务类型 checkbox 列表用 App.BUSINESS_TYPE 动态渲染 */
+        function renderBtCheckboxes() {
+            const box = document.getElementById("cpBtGroup");
+            box.innerHTML = Object.entries(App.BUSINESS_TYPE).map(([id, info]) =>
+                `<label><input type="checkbox" name="bt" value="${id}"> ${id}. ${App.escapeHtml(info.long)}</label>`
+            ).join("");
+        }
+        renderBtCheckboxes();
+
+        async function ensurePalletCache() {
+            if (cachedPallets === null) cachedPallets = await api("GET", "/api/v1/pallet-types");
+            return cachedPallets;
+        }
+
+        function fillCpPalletSelect(selectedIds = []) {
+            const sel = document.getElementById("cpPalletTypes");
+            const items = cachedPallets || [];
+            sel.innerHTML = items.map(p =>
+                `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`
+            ).join("");
+            Array.from(sel.options).forEach(o => {
+                o.selected = selectedIds.includes(parseInt(o.value, 10));
+            });
+        }
 
         async function loadCps() {
             const tbody = document.querySelector("#cpTable tbody");
@@ -183,25 +253,39 @@
                     return;
                 }
                 tbody.innerHTML = cachedCps.map(c => {
-                    const status = App.CP_RUN_STATUS[c.run_status] || { name: c.run_status, color: "#888" };
+                    const status = App.cpStatus(c.run_status);
+                    const btHtml = c.business_types.length
+                        ? c.business_types.map(bt => {
+                            const info = App.BUSINESS_TYPE[App.toIntKey(bt)];
+                            const short = info ? info.short : bt;
+                            const long = info ? info.long : "";
+                            return `<span class="badge on" title="${App.escapeHtml(long)}" style="background:#e6f0ff;color:#2a4a8a;margin-right:4px;">${App.escapeHtml(short)}</span>`;
+                        }).join("")
+                        : '<span class="muted">-</span>';
                     return `
                     <tr>
                         <td>${c.id}</td>
                         <td>${App.escapeHtml(c.code)}</td>
                         <td>${App.escapeHtml(c.name || "-")}</td>
-                        <td>${App.FUNC_MODE_NAME[c.func_mode] || c.func_mode}</td>
-                        <td>${App.PALLET_BIND_MODE_NAME[c.bind_pallet_mode] || c.bind_pallet_mode}</td>
-                        <td class="muted">${c.business_types.map(bt => "#" + bt).join(", ") || "-"}</td>
+                        <td>${App.lookup(App.FUNC_MODE_NAME, c.func_mode)}</td>
+                        <td>${App.lookup(App.PALLET_BIND_MODE_NAME, c.bind_pallet_mode)}</td>
+                        <td>${btHtml}</td>
                         <td>
                             <span class="badge" style="background:${status.color};color:#fff;">${status.name}</span>
-                            ${c.current_task_id ? `<span class="muted">→ task #${c.current_task_id}</span>` : ""}
+                            ${c.current_task_id ? `<span class="muted"> → task #${c.current_task_id}</span>` : ""}
                         </td>
                         <td>${c.priority}</td>
                         <td><span class="badge ${c.is_active ? "on" : "off"}">${c.is_active ? "启用" : "禁用"}</span></td>
                         <td class="actions">
+                            <button data-act="dispatch" data-uuid="${c.uuid}" data-code="${App.escapeHtml(c.code)}"
+                                class="${c.run_status === 0 && c.is_active ? '' : 'secondary'}"
+                                ${(c.run_status === 0 && c.is_active && c.business_types.length) ? '' : 'disabled'}>
+                                呼叫
+                            </button>
                             ${role === "admin" ? `
                                 <button data-act="edit"   data-uuid="${c.uuid}" class="secondary">编辑</button>
                                 <button data-act="points" data-uuid="${c.uuid}" data-name="${App.escapeHtml(c.code)}" class="secondary">AGV点位 (${c.agv_points.length})</button>
+                                <button data-act="toggle" data-uuid="${c.uuid}" data-active="${c.is_active}" class="${c.is_active ? 'secondary' : ''}">${c.is_active ? "停用" : "启用"}</button>
                                 <button data-act="del"    data-uuid="${c.uuid}" class="danger">删除</button>
                             ` : `
                                 <button data-act="points" data-uuid="${c.uuid}" data-name="${App.escapeHtml(c.code)}" class="secondary">查看点位</button>
@@ -216,8 +300,9 @@
 
         document.getElementById("refreshBtn").onclick = loadCps;
 
-        document.getElementById("addBtn").onclick = () => {
+        document.getElementById("addBtn").onclick = async () => {
             if (role !== "admin") return alert("只有 admin 能新增");
+            await ensurePalletCache();
             editingCpUuid = null;
             document.getElementById("cpModalTitle").textContent = "新增呼叫点";
             document.getElementById("cpForm").reset();
@@ -227,6 +312,7 @@
             document.getElementById("cpFunc").value = "3";
             document.getElementById("cpBindMode").value = "2";
             document.querySelectorAll("#cpBtGroup input[name=bt]").forEach(cb => cb.checked = false);
+            fillCpPalletSelect([]);
             document.getElementById("cpX").value = 0;
             document.getElementById("cpY").value = 0;
             document.getElementById("cpPriority").value = 100;
@@ -243,6 +329,7 @@
             if (act === "edit") {
                 const c = cachedCps.find(x => x.uuid === uuid);
                 if (!c) return;
+                await ensurePalletCache();
                 editingCpUuid = uuid;
                 document.getElementById("cpModalTitle").textContent = "编辑呼叫点 " + c.code;
                 document.getElementById("cpUuid").value = c.uuid;
@@ -255,6 +342,7 @@
                 document.querySelectorAll("#cpBtGroup input[name=bt]").forEach(cb => {
                     cb.checked = c.business_types.includes(parseInt(cb.value, 10));
                 });
+                fillCpPalletSelect(c.pallet_type_ids || []);
                 document.getElementById("cpX").value = c.coordinate_x;
                 document.getElementById("cpY").value = c.coordinate_y;
                 document.getElementById("cpPriority").value = c.priority;
@@ -265,8 +353,167 @@
                 if (!confirm(`确认删除呼叫点 ${uuid}?`)) return;
                 try { await api("DELETE", `/api/v1/call-points/${uuid}`); await loadCps(); }
                 catch (err) { alert(err.message); }
+            } else if (act === "toggle") {
+                const next = btn.dataset.active !== "true";
+                if (!confirm(`确认${next ? "启用" : "停用"}呼叫点 ${uuid}?${next ? "" : "\n停用后不能触发呼叫调度。"}`)) return;
+                try { await api("POST", `/api/v1/call-points/${uuid}/toggle-active?active=${next}`); await loadCps(); }
+                catch (err) { alert(err.message); }
             } else if (act === "points") {
                 await openPoints(uuid, btn.dataset.name);
+            } else if (act === "dispatch") {
+                await openDispatch(uuid, btn.dataset.code);
+            }
+        });
+
+        /* ===== 呼叫调度弹窗 (v2 — 后端按库存自动检索) ===== */
+
+        // cachedParts / cachedPallets 已在文件顶部声明,这里只补 cachedAgvs 的拉取
+        async function ensureDispatchLookups() {
+            const tasks = [];
+            if (cachedParts === null)  tasks.push(api("GET", "/api/v1/parts").then(d => cachedParts = d));
+            if (cachedPallets === null) tasks.push(api("GET", "/api/v1/pallet-types").then(d => cachedPallets = d));
+            if (cachedAgvs.length === 0) tasks.push(api("GET", "/api/v1/agvs").then(d => cachedAgvs = d));
+            await Promise.all(tasks);
+        }
+
+        function fillSelect(sel, items, valKey, labelFn, defaultOpt) {
+            sel.innerHTML = "";
+            if (defaultOpt) {
+                const o = document.createElement("option");
+                o.value = defaultOpt.value;
+                o.textContent = defaultOpt.label;
+                sel.appendChild(o);
+            }
+            items.forEach(it => {
+                const o = document.createElement("option");
+                o.value = it[valKey];
+                o.textContent = labelFn(it);
+                sel.appendChild(o);
+            });
+        }
+
+        // 业务类型 → 该业务需要的字段 (part / pallet) 与提示文案。
+        // SEND 类用 pallet (仅限 CP 已绑定的空托盘列表)
+        // FETCH 类用 part
+        const BIZ_RULES = {
+            1: { need: "pallet", hint: "前端只选要送的空托盘类型,后端自动找 EMPTY_SLOT + 已绑定该托盘的库位。" },
+            2: { need: "part",   hint: "前端只选零件号,后端自动找 FULL_MATERIAL + 该零件的库位。" },
+            3: { need: "part",   hint: "前端选要入库的零件号,后端按零件→托盘映射找 EMPTY_PALLET 库位。" },
+            4: { need: "pallet", hint: "前端选送料用的托盘类型(必须 ∈ CP 绑定),后端自动找空库位。" },
+        };
+
+        function applyBusinessFields(bt) {
+            const rule = BIZ_RULES[App.toIntKey(bt)] || { need: null, hint: "" };
+            document.getElementById("dpHint").textContent = rule.hint;
+
+            const partL    = document.getElementById("dpPartLabel");
+            const palletL  = document.getElementById("dpPalletLabel");
+            const partI    = document.getElementById("dpPart");
+            const palletI  = document.getElementById("dpPallet");
+
+            partL.style.display   = rule.need === "part"   ? "" : "none";
+            palletL.style.display = rule.need === "pallet" ? "" : "none";
+            partI.required        = rule.need === "part";
+            palletI.required      = rule.need === "pallet";
+        }
+
+        async function openDispatch(uuid, code) {
+            const cp = cachedCps.find(x => x.uuid === uuid);
+            if (!cp) return;
+            document.getElementById("dispatchModalTitle").textContent = `呼叫调度 · ${code}`;
+            document.getElementById("dispatchModalSub").textContent = `CP uuid: ${uuid}  |  支持 ${cp.business_types.length} 种业务  |  绑定空托盘 ${cp.pallet_type_ids ? cp.pallet_type_ids.length : 0} 种`;
+            document.getElementById("dispatchError").textContent = "";
+            document.getElementById("dispatchSubmit").disabled = false;
+            document.getElementById("dispatchSubmit").textContent = "呼叫";
+            document.getElementById("dispatchForm").dataset.cpUuid = uuid;
+
+            // 业务下拉:只显示该 cp 支持的业务
+            const btSel = document.getElementById("dpBusiness");
+            btSel.innerHTML = "";
+            cp.business_types.forEach(bt => {
+                const info = App.BUSINESS_TYPE[App.toIntKey(bt)];
+                const o = document.createElement("option");
+                o.value = bt;
+                o.textContent = info ? `${bt}. ${info.long}` : String(bt);
+                btSel.appendChild(o);
+            });
+            if (cp.business_types.length === 0) {
+                document.getElementById("dispatchError").textContent = "该呼叫点未配置任何支持的业务类型";
+                document.getElementById("dispatchSubmit").disabled = true;
+            }
+
+            await ensureDispatchLookups();
+
+            // 零件下拉 = 全部零件
+            fillSelect(
+                document.getElementById("dpPart"),
+                cachedParts || [], "uuid",
+                p => `${p.name || p.code} (${p.code})`,
+                { value: "", label: "请选择零件..." },
+            );
+
+            // 托盘下拉 = 仅 CP 已绑定的空托盘类型
+            const allowedPalletIds = new Set(cp.pallet_type_ids || []);
+            const cpPallets = (cachedPallets || []).filter(p => allowedPalletIds.has(p.id));
+            fillSelect(
+                document.getElementById("dpPallet"),
+                cpPallets, "uuid",
+                p => `${p.name || p.code} (${p.code})`,
+                { value: "", label: cpPallets.length ? "请选择托盘类型..." : "(该 CP 未绑定任何空托盘类型)" },
+            );
+
+            // AGV 下拉 = 启用 AGV
+            const activeAgvs = (cachedAgvs || []).filter(a => a.is_active);
+            fillSelect(
+                document.getElementById("dpAgv"),
+                activeAgvs, "uuid",
+                a => `${a.name} (${a.uuid})`,
+                { value: "", label: "自动选择" },
+            );
+
+            applyBusinessFields(btSel.value);
+            App.showModal("dispatchModal");
+        }
+
+        document.getElementById("dpBusiness").addEventListener("change", e => {
+            applyBusinessFields(e.target.value);
+        });
+
+        document.getElementById("dispatchForm").addEventListener("submit", async e => {
+            e.preventDefault();
+            const errEl = document.getElementById("dispatchError");
+            const submitBtn = document.getElementById("dispatchSubmit");
+            errEl.textContent = "";
+
+            const cpUuid = document.getElementById("dispatchForm").dataset.cpUuid;
+            const bt = App.toIntKey(document.getElementById("dpBusiness").value);
+            const rule = BIZ_RULES[bt] || { need: null };
+            const payload = { business_type: bt };
+
+            if (rule.need === "part") {
+                payload.part_uuid = document.getElementById("dpPart").value || null;
+                if (!payload.part_uuid) return errEl.textContent = "请选择零件";
+            } else if (rule.need === "pallet") {
+                payload.pallet_type_uuid = document.getElementById("dpPallet").value || null;
+                if (!payload.pallet_type_uuid) return errEl.textContent = "请选择(空)托盘类型";
+            }
+            const agv = document.getElementById("dpAgv").value;
+            if (agv) payload.prefer_agv_uuid = agv;
+
+            submitBtn.disabled = true;
+            submitBtn.textContent = "呼叫中...";
+            try {
+                const task = await api("POST", `/api/v1/call-points/${cpUuid}/dispatch`, payload);
+                App.hideModal("dispatchModal");
+                if (confirm(`呼叫成功!\n任务 #${task.id} 已下发给 AGV ${task.agv_name}\n${task.description || ""}\n\n是否打开任务历史查看详情?`)) {
+                    location.href = "tasks.html";
+                    return;
+                }
+                await loadCps();
+            } catch (err) {
+                errEl.textContent = err.message;
+                submitBtn.disabled = false;
+                submitBtn.textContent = "呼叫";
             }
         });
 
@@ -276,6 +523,8 @@
             errEl.textContent = "";
             const bts = Array.from(document.querySelectorAll("#cpBtGroup input[name=bt]:checked"))
                 .map(cb => parseInt(cb.value, 10));
+            const ptIds = Array.from(document.getElementById("cpPalletTypes").selectedOptions)
+                .map(o => parseInt(o.value, 10));
             const payload = {
                 name: document.getElementById("cpName").value.trim() || null,
                 func_mode: parseInt(document.getElementById("cpFunc").value, 10),
@@ -285,6 +534,7 @@
                 priority: parseInt(document.getElementById("cpPriority").value, 10) || 0,
                 max_concurrent_tasks: parseInt(document.getElementById("cpMax").value, 10) || 1,
                 business_types: bts,
+                pallet_type_ids: ptIds,
             };
             try {
                 if (editingCpUuid) {

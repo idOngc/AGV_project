@@ -16,13 +16,13 @@
         <div class="tabs">
             <div class="tab active" data-tab="part">零件</div>
             <div class="tab" data-tab="palletType">托盘类型</div>
-            <div class="tab" data-tab="mapping">零件↔托盘 绑定</div>
+            <div class="tab" data-tab="mapping">零件—托盘 绑定</div>
         </div>
 
         <!-- ===================== 零件 ===================== -->
         <div class="tab-panel active" data-panel="part">
             <div class="toolbar">
-                <h2>零件列表</h2>
+                <h2>零件(Part) 列表</h2>
                 <button class="secondary" id="partRefresh">刷新</button>
                 <button id="partAddBtn">新增零件</button>
             </div>
@@ -45,7 +45,7 @@
         <!-- ===================== 托盘类型 ===================== -->
         <div class="tab-panel" data-panel="palletType">
             <div class="toolbar">
-                <h2>托盘类型列表</h2>
+                <h2>托盘(Pallet)列表</h2>
                 <button class="secondary" id="ptRefresh">刷新</button>
                 <button id="ptAddBtn">新增托盘类型</button>
             </div>
@@ -66,10 +66,10 @@
             </table>
         </div>
 
-        <!-- ===================== 零件↔托盘 ===================== -->
+        <!-- ===================== 零件-托盘 ===================== -->
         <div class="tab-panel" data-panel="mapping">
             <div class="toolbar">
-                <h2>零件 ↔ 托盘类型 绑定</h2>
+                <h2>零件—托盘类型 绑定</h2>
                 <button class="secondary" id="mapRefresh">刷新</button>
                 <button id="mapAddBtn">新增绑定</button>
             </div>
@@ -149,7 +149,7 @@
     <!-- ===== 绑定弹窗 ===== -->
     <div class="modal-mask hidden" id="mapModal">
         <form class="modal" id="mapForm">
-            <h3>新增 零件↔托盘类型 绑定</h3>
+            <h3>新增 零件-托盘类型 绑定</h3>
             <label>零件
                 <select id="mapPart" required></select>
             </label>
@@ -168,7 +168,6 @@
     <script>
         App.renderTopbar("物料管理", "materials.html");
         App.bindModalCloseButtons();
-        App.bindTabs();
         const api = App.api;
         const role = App.user.role;
 
@@ -288,7 +287,7 @@
                         <td><code>${App.escapeHtml(p.uuid)}</code></td>
                         <td>${App.escapeHtml(p.code)}</td>
                         <td>${App.escapeHtml(p.name || "-")}</td>
-                        <td>${App.AGV_MODE_NAME[p.agv_mode] || p.agv_mode}</td>
+                        <td>${App.lookup(App.AGV_MODE_NAME, p.agv_mode)}</td>
                         <td class="muted">${App.escapeHtml(p.file_recognition || "-")}</td>
                         <td><span class="badge ${p.is_active ? "on" : "off"}">${p.is_active ? "启用" : "禁用"}</span></td>
                         <td class="actions">
@@ -452,15 +451,15 @@
             } catch (err) { errEl.textContent = err.message; }
         });
 
-        /* 首屏 */
-        loadParts();
-        // tab 切换时按需加载
-        document.querySelector(".tabs").addEventListener("click", e => {
-            const tab = e.target.closest(".tab");
-            if (!tab) return;
-            if (tab.dataset.tab === "palletType") loadPts();
-            if (tab.dataset.tab === "mapping") loadMappings();
+        /* tab 切换统一交给 App.bindTabs:切到哪个 tab 就调对应回调 */
+        App.bindTabs({
+            part: loadParts,
+            palletType: loadPts,
+            mapping: loadMappings,
         });
+
+        /* 首屏:默认在 part tab,直接加载 */
+        loadParts();
     </script>
 </body>
 </html>

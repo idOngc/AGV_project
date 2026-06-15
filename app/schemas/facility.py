@@ -121,6 +121,10 @@ class CallPointCreateIn(BaseModel):
     business_types: list[BusinessType] = Field(
         default_factory=list, description="该呼叫点支持的业务类型"
     )
+    pallet_type_ids: list[int] = Field(
+        default_factory=list,
+        description="该呼叫点绑定的(空)托盘类型 ID 列表;SEND 业务可选 pallet 范围",
+    )
 
 
 class CallPointUpdateIn(BaseModel):
@@ -133,6 +137,7 @@ class CallPointUpdateIn(BaseModel):
     max_concurrent_tasks: int | None = None
     is_active: bool | None = None
     business_types: list[BusinessType] | None = None
+    pallet_type_ids: list[int] | None = None
 
 
 class CallPointOut(BaseModel):
@@ -153,6 +158,7 @@ class CallPointOut(BaseModel):
     is_active: bool
 
     business_types: list[BusinessType] = Field(default_factory=list)
+    pallet_type_ids: list[int] = Field(default_factory=list)
     agv_points: list[AgvPointOut] = Field(default_factory=list)
 
     created_at: datetime

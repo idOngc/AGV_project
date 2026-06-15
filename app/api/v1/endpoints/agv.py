@@ -31,7 +31,7 @@ async def list_agvs(
     _: User = Depends(get_current_user),
 ) -> list[AGVOut]:
     agvs = await agv_service.list_agvs(include_disabled=include_disabled)
-    return [AGVOut.model_validate(a) for a in agvs]
+    return [AGVOut.from_orm_with_labels(a) for a in agvs]
 
 
 @router.post("", response_model=AGVOut, status_code=status.HTTP_201_CREATED, summary="新增 AGV")
@@ -40,7 +40,7 @@ async def create_agv(
     _: User = Depends(require_admin_dep),
 ) -> AGVOut:
     agv = await agv_service.create_agv(payload.model_dump())
-    return AGVOut.model_validate(agv)
+    return AGVOut.from_orm_with_labels(agv)
 
 
 @router.get("/{uuid}", response_model=AGVOut, summary="AGV 详情")
@@ -49,17 +49,19 @@ async def get_agv(
     _: User = Depends(get_current_user),
 ) -> AGVOut:
     agv = await agv_service.get_agv(uuid)
-    return AGVOut.model_validate(agv)
+    return AGVOut.from_orm_with_labels(agv)
 
 
-# @router.patch("/{uuid}", response_model=AGVOut, summary="部分更新 AGV")
-# async def update_agv(
-#     uuid: str,
-#     payload: AGVUpdateIn,
-#     _: User = Depends(require_admin_dep),
-# ) -> AGVOut:
-#     agv = await agv_service.update_agv(uuid, payload.model_dump(exclude_unset=True))
-#     return AGVOut.model_validate(agv)
+@router.patch("/{uuid}", response_model=AGVOut, summary="部分更新 AGV")
+async def update_agv(
+    uuid: str,
+    payload: AGVUpdateIn,
+    _: User = Depends(require_admin_dep),
+) -> AGVOut:
+    """部分更新 AGV(uuid 本身不可改,改了等于换一台车)。
+    只传想改的字段即可;改完会自动断掉旧 SEER 连接,下次访问重连。"""
+    agv = await agv_service.update_agv(uuid, payload.model_dump(exclude_unset=True))
+    return AGVOut.from_orm_with_labels(agv)
 
 
 @router.delete("/{uuid}", summary="删除 AGV")
@@ -73,6 +75,17 @@ async def delete_agv(
         return {"deleted": uuid, "hard": True}
     await agv_service.disable_agv(uuid)
     return {"deleted": uuid, "hard": False}
+
+
+@router.post("/{uuid}/toggle-active", response_model=AGVOut, summary="启用/停用 AGV")
+async def toggle_agv_active(
+    uuid: str,
+    active: bool = Query(..., description="true=启用,false=停用"),
+    _: User = Depends(require_admin_dep),
+) -> AGVOut:
+    """停用后心跳轮询会跳过该车;再启用时下一次轮询会重连。"""
+    agv = await agv_service.set_active(uuid, active)
+    return AGVOut.from_orm_with_labels(agv)
 
 
 # 通信类接口 —— 依赖 SEER 连接层

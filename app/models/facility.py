@@ -225,3 +225,33 @@ class CallPointBusinessTypeBinding(Model):
     class Meta:
         table = "call_point_business_type"
         unique_together = (("call_point", "business_type"),)
+
+
+class CallPointPalletTypeBinding(Model):
+    """呼叫点↔可使用的(空)托盘类型 多对多。
+
+    用途:
+      - SEND_EMPTY_TO_WS:    呼叫点能向库位送的空托盘种类
+      - SEND_MATERIAL_TO_WS: 呼叫点能向库位送料用的托盘种类
+      也就是"这个呼叫点目前现场堆放/接收哪几种空托盘"。
+
+    调度时:
+      - SEND 类业务的 pallet_type_uuid 必须在该绑定列表里
+      - FETCH 类业务的 part 必须能匹配到该列表里至少一种托盘(=与 part_pallet_mapping 求交集)
+    """
+
+    id = fields.IntField(pk=True)
+    call_point = fields.ForeignKeyField(
+        "models.CallPoint",
+        related_name="pallet_type_bindings",
+        on_delete=fields.CASCADE,
+    )
+    pallet_type = fields.ForeignKeyField(
+        "models.PalletType",
+        related_name="call_point_bindings",
+        on_delete=fields.CASCADE,
+    )
+
+    class Meta:
+        table = "call_point_pallet_type"
+        unique_together = (("call_point", "pallet_type"),)

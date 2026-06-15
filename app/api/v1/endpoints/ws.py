@@ -87,6 +87,17 @@ async def delete_ws(
     return {"deleted": uuid}
 
 
+@router.post("/{uuid}/toggle-active", response_model=WSOut, summary="启用/停用库位")
+async def toggle_ws_active(
+    uuid: str,
+    active: bool = Query(..., description="true=启用,false=停用"),
+    _: User = Depends(require_admin_dep),
+) -> WSOut:
+    ws = await facility_service.set_ws_active(uuid, active)
+    extras = await facility_service.get_ws_extras(ws)
+    return _ws_to_out(ws, extras)
+
+
 # -- AGV 点位子接口 --
 
 

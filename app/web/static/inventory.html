@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AGV 调度系统-库存 / 放料图</title>
+    <title>AGV 调度系统-库存</title>
     <link rel="stylesheet" href="style.css">
 </head>
 <body>
     <header class="topbar">
-        <h1>库存 / 放料图</h1>
+        <h1>库存</h1>
         <div></div>
     </header>
 
@@ -83,8 +83,9 @@
 
     <script src="app.js"></script>
     <script>
-        App.renderTopbar("库存 / 放料图", "inventory.html");
+        App.renderTopbar("库存", "inventory.html");
         App.bindModalCloseButtons();
+        // 两个 tab 共享同一份数据 (loadAll 已经把卡片和放料图一起渲染),不用按 tab 触发加载
         App.bindTabs();
         const api = App.api;
         const role = App.user.role;
@@ -137,18 +138,31 @@
             grid.innerHTML = items.map(({ ws, inv }) => {
                 const partCode = inv && inv.part_id ? partMap.get(inv.part_id) || "—" : "";
                 const ptCode = inv && inv.pallet_type_id ? ptMap.get(inv.pallet_type_id) || "—" : "";
-                const tag = inv ? (App.INVENTORY_STATUS[inv.status]?.name || "?") : "未初始化";
+                // 状态优先级: WS 禁用 > 库存当前状态 > 默认 EMPTY_SLOT
+                let statusObj;
+                if (!ws.is_active) {
+                    statusObj = App.INVENTORY_STATUS[0]; // DISABLED
+                } else if (inv) {
+                    statusObj = App.invStatus(inv.status);
+                } else {
+                    statusObj = App.INVENTORY_STATUS[1]; // EMPTY_SLOT
+                }
+                const cls = "inv-" + statusObj.code;
+                const tag = statusObj.name;
                 const lockedTip = inv && inv.is_locked
                     ? `<div class="muted" style="color:#dc3545;">已锁定 by task #${inv.locked_by_task_id || "?"}</div>`
                     : "";
                 return `
-                <div class="slot-card">
+                <div class="slot-card ${cls}">
                     <div class="slot-head">
                         <span class="slot-no">${App.escapeHtml(ws.code)}</span>
-                        <span class="slot-tag">
-                            ${App.escapeHtml(partCode || tag)}<br>
-                            <span class="muted">${App.escapeHtml(ptCode || "")}</span>
+                        <span class="slot-tag" style="color:${statusObj.color};font-weight:600;">
+                            ${App.escapeHtml(tag)}
                         </span>
+                    </div>
+                    <div class="muted" style="margin-bottom:6px;">
+                        零件: ${App.escapeHtml(partCode || "—")}<br>
+                        托盘: ${App.escapeHtml(ptCode || "—")}
                     </div>
                     ${lockedTip}
                     <div class="slot-actions">
@@ -222,21 +236,21 @@
                 return;
             }
             const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
+            const ptMap = new Map(cachedPts.map(p => [p.id, p.code]));
             grid.innerHTML = items.map(({ ws, inv }) => {
-                let cls = "inv-EMPTY_SLOT";
-                let partLabel = "";
+                let statusObj, partLabel = "";
                 if (!ws.is_active) {
-                    cls = "inv-DISABLED";
+                    statusObj = App.INVENTORY_STATUS[0];
                 } else if (inv) {
-                    cls = "inv-" + (App.INVENTORY_STATUS[inv.status]?.code || "EMPTY_SLOT");
-                    if (inv.part_id) {
-                        partLabel = partMap.get(inv.part_id) || ("#" + inv.part_id);
-                    } else if (inv.pallet_type_id) {
-                        partLabel = cachedPts.find(p => p.id === inv.pallet_type_id)?.code || "";
-                    }
+                    statusObj = App.invStatus(inv.status);
+                    if (inv.part_id) partLabel = partMap.get(inv.part_id) || ("#" + inv.part_id);
+                    else if (inv.pallet_type_id) partLabel = ptMap.get(inv.pallet_type_id) || "";
+                } else {
+                    statusObj = App.INVENTORY_STATUS[1];
                 }
+                const cls = "inv-" + statusObj.code;
                 return `
-                <div class="map-cell ${cls}" title="${App.escapeHtml(ws.uuid)}">
+                <div class="map-cell ${cls}" title="${App.escapeHtml(ws.code)} · ${App.escapeHtml(statusObj.name)}">
                     <span class="mc-no">${App.escapeHtml(ws.code)}</span>
                     <span class="mc-part">${App.escapeHtml(partLabel)}</span>
                 </div>`;

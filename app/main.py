@@ -11,8 +11,8 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 from typing import AsyncIterator
 
-from fastapi import FastAPI
-from fastapi.responses import RedirectResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from tortoise import Tortoise
 
@@ -23,6 +23,7 @@ from app.core.logging import setup_logging
 # REDIS: from app.db.redis import close_redis, init_redis
 from app.db.tortoise_conf import TORTOISE_ORM
 from app.utils.exceptions import register_exception_handlers
+from app.workers.agv_status_poller import agv_status_poller
 from app.workers.task_poller import task_poller
 
 setup_logging()
@@ -39,11 +40,13 @@ async def lifespan(_: FastAPI) -> AsyncIterator[None]:
 
     # 注: SEER 连接走懒连接策略,这里不需要主动 init_from_db。
     await task_poller.start()
+    await agv_status_poller.start()
 
     try:
         yield
     finally:
         log.info("=== shutting down ===")
+        await agv_status_poller.stop()
         await task_poller.stop()
         await seer_manager.close_all()
         # REDIS: await close_redis()
@@ -65,12 +68,24 @@ async def health() -> dict:
     return {"status": "ok", "app": settings.APP_NAME, "env": settings.APP_ENV}
 
 
-# 静态前端(临时页面,将来 Vue 上线后移除) 
+# 静态前端(临时页面,将来 Vue 上线后移除)
 _WEB_DIR = Path(__file__).parent / "web" / "static"
 if _WEB_DIR.is_dir():
+
+    class _NoCacheStaticFiles(StaticFiles):
+        """开发期 staticfiles:HTML/JS/CSS 一律不缓存,避免改前端后忘了硬刷新。
+        Vue 上线后这一层会被替换掉,生产环境自然会按构建出来的 hash 文件缓存。"""
+
+        async def get_response(self, path: str, scope):  # type: ignore[override]
+            resp: Response = await super().get_response(path, scope)
+            resp.headers["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+            resp.headers["Pragma"] = "no-cache"
+            resp.headers["Expires"] = "0"
+            return resp
+
     app.mount(
         "/web",
-        StaticFiles(directory=str(_WEB_DIR), html=True),
+        _NoCacheStaticFiles(directory=str(_WEB_DIR), html=True),
         name="web",
     )
 

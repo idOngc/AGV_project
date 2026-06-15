@@ -16,9 +16,13 @@
     <main>
         <!-- 工具栏 -->
         <div class="toolbar">
-            <h2>已注册 AGV</h2>
+            <h2>AGV列表</h2>
             <button class="secondary" id="refreshBtn">刷新</button>
             <button class="secondary" id="pingAllBtn" title="对所有启用的 AGV 测一次通信">全部测连接</button>
+            <label class="muted" style="margin: 0; display: flex; align-items: center; gap: 6px;">
+                <input type="checkbox" id="autoRefresh" checked style="width:auto;display:inline;margin:0;">
+                自动刷新 (5s)
+            </label>
             <button id="addBtn">新增 AGV</button>
         </div>
 
@@ -31,6 +35,9 @@
                     <th>IP</th>
                     <th>类型</th>
                     <th>启用</th>
+                    <th>运行态</th>
+                    <th>电量</th>
+                    <th>当前任务</th>
                     <th>连接</th>
                     <th>操作</th>
                 </tr>
@@ -42,11 +49,11 @@
         <p class="muted" style="margin-top: 8px;" id="emptyHint"></p>
     </main>
 
-    <!-- 新增 AGV 弹窗 -->
+    <!-- 新增 / 编辑 AGV 弹窗 (共用同一表单,通过 data-mode 切换) -->
     <div class="modal-mask hidden" id="addModal">
-        <form class="modal" id="addForm">
-            <h3>新增 AGV</h3>
-            <label>UUID(唯一标识)
+        <form class="modal" id="addForm" data-mode="add">
+            <h3 id="addTitle">新增 AGV</h3>
+            <label>UUID(唯一标识) <span class="muted" id="uuidHint"></span>
                 <input type="text" id="newUuid" required maxlength="64">
             </label>
             <label>显示名
@@ -166,16 +173,29 @@
         //     AGV 列表加载                                            
         const MODE_NAMES = { 1: "叉车", 2: "顶升车", 3: "拖车", 4: "翻转车" };
         let cachedAgvs = [];
+        // ping 结果按 uuid 缓存,自动刷新重渲后不丢
+        const connState = new Map();
 
         async function loadAgvs() {
             const tbody = document.querySelector("#agvTable tbody");
-            tbody.innerHTML = `<tr><td colspan="7" class="muted">加载中...</td></tr>`;
+            tbody.innerHTML = `<tr><td colspan="10" class="muted">加载中...</td></tr>`;
             try {
                 cachedAgvs = await api("GET", "/api/v1/agvs");
                 renderTable();
             } catch (e) {
-                tbody.innerHTML = `<tr><td colspan="7" class="error">${e.message}</td></tr>`;
+                tbody.innerHTML = `<tr><td colspan="10" class="error">${e.message}</td></tr>`;
             }
+        }
+
+        // OFFLINE / UNKNOWN 时不展示电量(后端心跳已把 battery_level 清空,这里再做一层兜底)
+        const _OFFLINE_RS = [0, 6];
+        function batteryCell(level, run_state) {
+            if (level === null || level === undefined || _OFFLINE_RS.includes(parseInt(run_state, 10))) {
+                return `<span class="muted">-</span>`;
+            }
+            const v = Math.round(level);
+            const color = v < 20 ? "#ed4858" : v < 50 ? "#f4c44b" : "#66c2a5";
+            return `<span class="badge" style="background:${color};color:#fff;min-width:46px;text-align:center;">${v}%</span>`;
         }
 
         function renderTable() {
@@ -187,7 +207,10 @@
                 return;
             }
             hint.textContent = "";
-            tbody.innerHTML = cachedAgvs.map((a, idx) => `
+            tbody.innerHTML = cachedAgvs.map((a, idx) => {
+                const rs = App.agvRunState(a.run_state);
+                const lastTs = a.last_status_at ? App.fmtTime(a.last_status_at) : "未拉取";
+                return `
                 <tr data-uuid="${a.uuid}">
                     <td><code>${a.uuid}</code></td>
                     <td>${a.name}</td>
@@ -198,17 +221,28 @@
                             ${a.is_active ? "启用" : "禁用"}
                         </span>
                     </td>
-                    <td><span class="badge unknown" data-conn-cell="${idx}">未测</span></td>
+                    <td>
+                        <span class="badge" style="background:${rs.color};color:#fff;" title="last_status_at: ${lastTs}">${rs.name}</span>
+                    </td>
+                    <td>${batteryCell(a.battery_level, a.run_state)}</td>
+                    <td>${a.current_task_uuid ? `<code class="muted" title="${a.current_task_uuid}">${a.current_task_uuid.substring(0,8)}...</code>` : '<span class="muted">-</span>'}</td>
+                    <td>${(() => {
+                        const s = connState.get(a.uuid);
+                        if (!s) return `<span class="badge unknown" data-conn-cell="${idx}">未测</span>`;
+                        return `<span class="badge ${s.cls}" data-conn-cell="${idx}" title="${s.title || ''}">${s.text}</span>`;
+                    })()}</td>
                     <td class="actions">
-                        <button data-act="ping"     data-uuid="${a.uuid}">测通信</button>
-                        <button data-act="status"   data-uuid="${a.uuid}" class="secondary">实时状态</button>
-                        <button data-act="dispatch" data-uuid="${a.uuid}" data-name="${a.name}">下发任务</button>
+                        <button data-act="ping"     data-uuid="${a.uuid}" ${a.is_active ? "" : "disabled"}>测通信</button>
+                        <button data-act="status"   data-uuid="${a.uuid}" class="secondary" ${a.is_active ? "" : "disabled"}>实时状态</button>
+                        <button data-act="dispatch" data-uuid="${a.uuid}" data-name="${a.name}" ${a.is_active ? "" : "disabled"}>下发任务</button>
                         ${user.role === "admin" ? `
+                            <button data-act="edit"   data-uuid="${a.uuid}" class="secondary">编辑</button>
+                            <button data-act="toggle" data-uuid="${a.uuid}" data-active="${a.is_active}" class="${a.is_active ? 'secondary' : ''}">${a.is_active ? "停用" : "启用"}</button>
                             <button data-act="delete" data-uuid="${a.uuid}" class="danger">删除</button>
                         ` : ""}
                     </td>
                 </tr>
-            `).join("");
+            `;}).join("");
         }
 
         //     行内动作                                             
@@ -224,6 +258,17 @@
                 await showStatus(uuid);
             } else if (act === "dispatch") {
                 openTaskModal(uuid, btn.dataset.name);
+            } else if (act === "edit") {
+                openEditModal(uuid);
+            } else if (act === "toggle") {
+                const isActive = btn.dataset.active === "true";
+                const next = !isActive;
+                if (!confirm(`确认${next ? "启用" : "停用"} AGV ${uuid}?${next ? "" : "\n停用后心跳轮询会跳过该车,且不能下发任务。"}`)) return;
+                try {
+                    await api("POST", `/api/v1/agvs/${uuid}/toggle-active?active=${next}`);
+                    connState.delete(uuid);
+                    await loadAgvs();
+                } catch (e) { alert(e.message); }
             } else if (act === "delete") {
                 if (!confirm(`确认删除 AGV ${uuid}?`)) return;
                 try {
@@ -235,26 +280,28 @@
 
         async function pingOne(uuid, btnEl) {
             const row = document.querySelector(`tr[data-uuid="${uuid}"]`);
-            const connCell = row.querySelector("[data-conn-cell]");
+            const connCell = row ? row.querySelector("[data-conn-cell]") : null;
             if (btnEl) { btnEl.disabled = true; btnEl.textContent = "测试中..."; }
-            connCell.className = "badge unknown";
-            connCell.textContent = "测试中";
+            if (connCell) {
+                connCell.className = "badge unknown";
+                connCell.textContent = "测试中";
+            }
             try {
                 const res = await api("POST", `/api/v1/agvs/${uuid}/ping`);
                 if (res.ok) {
-                    connCell.className = "badge on";
-                    connCell.textContent = `在线 ${res.latency_ms}ms`;
+                    connState.set(uuid, { cls: "on",  text: `在线 ${res.latency_ms}ms`, title: "" });
                 } else {
-                    connCell.className = "badge off";
-                    connCell.textContent = res.reason || "失败";
-                    connCell.title = res.error || "";
+                    connState.set(uuid, { cls: "off", text: res.reason || "失败",      title: res.error || "" });
                 }
             } catch (e) {
-                connCell.className = "badge off";
-                connCell.textContent = "错误";
-                connCell.title = e.message;
+                connState.set(uuid, { cls: "off", text: "错误", title: e.message });
             } finally {
                 if (btnEl) { btnEl.disabled = false; btnEl.textContent = "测通信"; }
+                // 把最新结果回写到当前行(避免等待下次自动刷新)
+                const s = connState.get(uuid);
+                const r2 = document.querySelector(`tr[data-uuid="${uuid}"]`);
+                const c2 = r2 ? r2.querySelector("[data-conn-cell]") : null;
+                if (c2 && s) { c2.className = "badge " + s.cls; c2.textContent = s.text; c2.title = s.title || ""; }
             }
         }
 
@@ -279,23 +326,60 @@
             }
         }
 
-        // 新增 AGV
+        // 新增 / 编辑 AGV — 共用 #addModal 表单,用 data-mode 切换
+        const addForm  = document.getElementById("addForm");
+        const addTitle = document.getElementById("addTitle");
+        const uuidHint = document.getElementById("uuidHint");
+        const newUuid  = document.getElementById("newUuid");
+
+        function setFormMode(mode, agv) {
+            addForm.dataset.mode = mode;
+            document.getElementById("addError").textContent = "";
+            addForm.reset();
+            if (mode === "add") {
+                addTitle.textContent = "新增 AGV";
+                uuidHint.textContent = "";
+                newUuid.value = "";
+                newUuid.readOnly = false;
+                newUuid.style.background = "";
+            } else {
+                addTitle.textContent = `编辑 AGV · ${agv.name}`;
+                uuidHint.textContent = "(只读,不可修改)";
+                newUuid.value = agv.uuid;
+                newUuid.readOnly = true;
+                newUuid.style.background = "#f3f4f6";
+                document.getElementById("newName").value      = agv.name;
+                document.getElementById("newIp").value        = agv.ip;
+                document.getElementById("newMode").value      = String(agv.mode);
+                document.getElementById("newPortState").value  = agv.port_state;
+                document.getElementById("newPortCtrl").value   = agv.port_ctrl;
+                document.getElementById("newPortTask").value   = agv.port_task;
+                document.getElementById("newPortConfig").value = agv.port_config;
+                document.getElementById("newPortOther").value  = agv.port_other;
+            }
+            showModal("addModal");
+        }
+
+        function openEditModal(uuid) {
+            const agv = cachedAgvs.find(a => a.uuid === uuid);
+            if (!agv) { alert("AGV 数据未加载,稍后再试"); return; }
+            setFormMode("edit", agv);
+        }
+
         document.getElementById("addBtn").addEventListener("click", () => {
             if (user.role !== "admin") {
                 alert("只有 admin 角色能新增 AGV");
                 return;
             }
-            document.getElementById("addForm").reset();
-            document.getElementById("addError").textContent = "";
-            showModal("addModal");
+            setFormMode("add");
         });
 
-        document.getElementById("addForm").addEventListener("submit", async (e) => {
+        addForm.addEventListener("submit", async (e) => {
             e.preventDefault();
             const errEl = document.getElementById("addError");
             errEl.textContent = "";
+            const mode = addForm.dataset.mode;
             const payload = {
-                uuid: document.getElementById("newUuid").value.trim(),
                 name: document.getElementById("newName").value.trim(),
                 ip:   document.getElementById("newIp").value.trim(),
                 mode: parseInt(document.getElementById("newMode").value, 10),
@@ -306,7 +390,13 @@
                 port_other:  parseInt(document.getElementById("newPortOther").value, 10),
             };
             try {
-                await api("POST", "/api/v1/agvs", payload);
+                if (mode === "edit") {
+                    const uuid = newUuid.value.trim();
+                    await api("PATCH", `/api/v1/agvs/${uuid}`, payload);
+                } else {
+                    payload.uuid = newUuid.value.trim();
+                    await api("POST", "/api/v1/agvs", payload);
+                }
                 hideModal("addModal");
                 await loadAgvs();
             } catch (err) {
@@ -379,8 +469,9 @@
         };
         function statusName(code) { return TASK_STATUS_NAME[code] || code; }
 
-        // 刷新按钮 + 首次加载
+        // 刷新按钮 + 自动刷新 + 首次加载
         document.getElementById("refreshBtn").addEventListener("click", loadAgvs);
+        App.makeAutoRefresh(loadAgvs, 5000, "autoRefresh")();
         loadAgvs();
     </script>
 </body>

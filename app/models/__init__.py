@@ -10,13 +10,14 @@ from app.models.facility import (
     CallPoint,
     CallPointAgvPoint,
     CallPointBusinessTypeBinding,
+    CallPointPalletTypeBinding,
     WS,
     WSAgvPoint,
     WSPalletTypeBinding,
 )
 from app.models.inventory import Inventory
 from app.models.material import PalletType, Part, PartPalletMapping
-from app.models.task import Task
+from app.models.task import Task, TaskStep, TaskTemplate
 from app.models.user import Role, User
 
 __all__ = [
@@ -24,6 +25,8 @@ __all__ = [
     "Role",
     "AGV",
     "Task",
+    "TaskTemplate",
+    "TaskStep",
     "Part",
     "PalletType",
     "PartPalletMapping",
@@ -33,5 +36,6 @@ __all__ = [
     "CallPoint",
     "CallPointAgvPoint",
     "CallPointBusinessTypeBinding",
+    "CallPointPalletTypeBinding",
     "Inventory",
 ]

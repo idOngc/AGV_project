@@ -54,8 +54,11 @@ class AGVBusy(AppError):
 # 内部小工具
 
 def _now() -> datetime:
-    """统一时间源 —— Tortoise 默认 naive UTC,这里也用 naive。"""
-    return datetime.utcnow()
+    """统一时间源 —— 用本地 naive 时间,与 Tortoise(use_tz=False, Asia/Shanghai)、
+    dispatch_service._now、inventory_service 保持一致;之前用 utcnow() 会导致
+    跨 service 比较时差 8 小时,task_poller D 档兜底永远命不中。
+    """
+    return datetime.now()
 
 
 def _build_seer_body(task: Task) -> dict[str, Any]:
@@ -92,13 +95,26 @@ def _is_seer_ok(resp: dict[str, Any] | None) -> tuple[bool, str | None]:
 
 # CRUD
 
+# 所有外键预取列表 —— TaskOut.from_orm_with_agv 会全部访问到,缺一个就会 NoValuesFetched
+_TASK_PREFETCH = (
+    "agv",
+    "template",
+    "call_point",
+    "from_ws",
+    "to_ws",
+    "part",
+    "pallet_type",
+    "inventory",
+)
+
+
 async def list_tasks(
     *,
     agv_uuid: str | None = None,
     status_in: list[TaskStatus] | None = None,
     limit: int = 50,
 ) -> list[Task]:
-    qs = Task.all().prefetch_related("agv").order_by("-id")
+    qs = Task.all().prefetch_related(*_TASK_PREFETCH).order_by("-id")
     if agv_uuid:
         qs = qs.filter(agv__uuid=agv_uuid)
     if status_in:
@@ -107,14 +123,14 @@ async def list_tasks(
 
 
 async def get_task(task_id: int) -> Task:
-    task = await Task.filter(id=task_id).prefetch_related("agv").first()
+    task = await Task.filter(id=task_id).prefetch_related(*_TASK_PREFETCH).first()
     if not task:
         raise TaskNotFound(f"任务不存在: id={task_id}")
     return task
 
 
 async def get_task_by_uuid(task_uuid: str) -> Task | None:
-    return await Task.filter(uuid=task_uuid).prefetch_related("agv").first()
+    return await Task.filter(uuid=task_uuid).prefetch_related(*_TASK_PREFETCH).first()
 
 
 # 下发
@@ -246,6 +262,21 @@ async def resume(task_id: int) -> Task:
 
 
 async def cancel(task_id: int) -> Task:
+    """取消任务:
+      - 调度类任务(business_type/template 非空):转发给 dispatch_service.cancel_orchestrated,
+        以走完整收尾路径(SEER cancel + step SKIPPED + 释放 inventory/AGV/CallPoint 锁);
+        否则之前只改 task.status=CANCELED 导致呼叫点常驻"使用中"、step 常驻"执行中"。
+      - 手动 ad-hoc 任务(没有业务编排):走老的 _control 路径即可。
+    """
+    task = await get_task(task_id)
+    if task.status not in (TaskStatus.RUNNING, TaskStatus.PAUSED):
+        raise TaskStateError(f"任务 #{task_id} 状态 {task.status.name},不能取消")
+
+    if task.business_type is not None or task.template_id is not None:
+        # 延迟导入避免 service 间循环依赖
+        from app.services import dispatch_service  # noqa: PLC0415
+        return await dispatch_service.cancel_orchestrated(task_id)
+
     return await _control(task_id, "cancel")
 
 

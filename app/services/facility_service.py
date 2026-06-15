@@ -17,6 +17,7 @@ from app.models.facility import (
     CallPoint,
     CallPointAgvPoint,
     CallPointBusinessTypeBinding,
+    CallPointPalletTypeBinding,
     WS,
     WSAgvPoint,
     WSPalletTypeBinding,
@@ -72,7 +73,8 @@ async def update_ws(uuid: str, patch: dict[str, Any]) -> WS:
     pallet_type_ids = patch.pop("pallet_type_ids", None)
 
     for k, v in patch.items():
-        if v is None:
+        # is_active 允许显式 False;其它字段保持 None=不动 的语义
+        if v is None and k != "is_active":
             continue
         setattr(obj, k, v)
     await obj.save()
@@ -85,6 +87,13 @@ async def update_ws(uuid: str, patch: dict[str, Any]) -> WS:
 async def delete_ws(uuid: str) -> None:
     obj = await get_ws(uuid)
     await obj.delete()
+
+
+async def set_ws_active(uuid: str, active: bool) -> WS:
+    obj = await get_ws(uuid)
+    obj.is_active = active
+    await obj.save(update_fields=["is_active", "updated_at"])
+    return obj
 
 
 async def _replace_ws_pallet_types(ws: WS, pallet_type_ids: list[int]) -> None:
@@ -152,29 +161,42 @@ async def create_call_point(payload: dict[str, Any]) -> CallPoint:
         raise CallPointConflict(f"呼叫点 code 已存在: {payload['code']}")
 
     business_types: list[BusinessType] = payload.pop("business_types", []) or []
+    pallet_type_ids: list[int] = payload.pop("pallet_type_ids", []) or []
     obj = await CallPoint.create(**payload)
     await _replace_call_point_business_types(obj, business_types)
+    await _replace_call_point_pallet_types(obj, pallet_type_ids)
     return obj
 
 
 async def update_call_point(uuid: str, patch: dict[str, Any]) -> CallPoint:
     obj = await get_call_point(uuid)
     business_types = patch.pop("business_types", None)
+    pallet_type_ids = patch.pop("pallet_type_ids", None)
 
     for k, v in patch.items():
-        if v is None:
+        # is_active 允许显式设 False;其它字段保持原 None=不动 的语义
+        if v is None and k != "is_active":
             continue
         setattr(obj, k, v)
     await obj.save()
 
     if business_types is not None:
         await _replace_call_point_business_types(obj, business_types)
+    if pallet_type_ids is not None:
+        await _replace_call_point_pallet_types(obj, pallet_type_ids)
     return obj
 
 
 async def delete_call_point(uuid: str) -> None:
     obj = await get_call_point(uuid)
     await obj.delete()
+
+
+async def set_call_point_active(uuid: str, active: bool) -> CallPoint:
+    obj = await get_call_point(uuid)
+    obj.is_active = active
+    await obj.save(update_fields=["is_active", "updated_at"])
+    return obj
 
 
 async def _replace_call_point_business_types(
@@ -184,6 +206,18 @@ async def _replace_call_point_business_types(
     # 去重
     for bt in {BusinessType(bt) for bt in business_types}:
         await CallPointBusinessTypeBinding.create(call_point=cp, business_type=bt)
+
+
+async def _replace_call_point_pallet_types(
+    cp: CallPoint, pallet_type_ids: list[int]
+) -> None:
+    """全量替换 CP↔PalletType 绑定。"""
+    for pt_id in pallet_type_ids:
+        if not await PalletType.filter(id=pt_id).exists():
+            raise PalletTypeNotFound(f"托盘类型不存在: id={pt_id}")
+    await CallPointPalletTypeBinding.filter(call_point=cp).delete()
+    for pt_id in set(pallet_type_ids):
+        await CallPointPalletTypeBinding.create(call_point=cp, pallet_type_id=pt_id)
 
 
 # -- CallPoint AGV 点位子表 --
@@ -233,8 +267,12 @@ async def get_call_point_extras(cp: CallPoint) -> dict:
     bts = await CallPointBusinessTypeBinding.filter(call_point=cp).values_list(
         "business_type", flat=True
     )
+    pt_ids = await CallPointPalletTypeBinding.filter(call_point=cp).values_list(
+        "pallet_type_id", flat=True
+    )
     agv_points = await CallPointAgvPoint.filter(call_point=cp).order_by("id")
     return {
         "business_types": [BusinessType(b) for b in bts],
+        "pallet_type_ids": list(pt_ids),
         "agv_points": agv_points,
     }

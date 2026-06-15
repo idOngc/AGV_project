@@ -18,10 +18,10 @@ from __future__ import annotations
 from fastapi import APIRouter, Depends, Query, status
 
 from app.api.deps import get_current_user
-from app.models.task import TaskStatus
+from app.models.task import TaskStatus, TaskStep
 from app.models.user import User
-from app.schemas.task import TaskCreateIn, TaskOut
-from app.services import task_service
+from app.schemas.task import TaskCreateIn, TaskDetailOut, TaskOut
+from app.services import dispatch_service, task_service
 
 router = APIRouter()
 
@@ -76,6 +76,20 @@ async def get_task(
     return TaskOut.from_orm_with_agv(task)
 
 
+@router.get(
+    "/{task_id}/detail",
+    response_model=TaskDetailOut,
+    summary="任务详情(含 steps,供详情页用)",
+)
+async def get_task_detail(
+    task_id: int,
+    _: User = Depends(get_current_user),
+) -> TaskDetailOut:
+    task = await task_service.get_task(task_id)
+    steps = await TaskStep.filter(task_id=task.id).order_by("step_no")
+    return TaskDetailOut.from_orm_with_steps(task, steps)
+
+
 @router.post("/{task_id}/pause", response_model=TaskOut, summary="暂停任务")
 async def pause_task(
     task_id: int,
@@ -100,4 +114,21 @@ async def cancel_task(
     _: User = Depends(get_current_user),
 ) -> TaskOut:
     task = await task_service.cancel(task_id)
+    return TaskOut.from_orm_with_agv(task)
+
+
+@router.post(
+    "/{task_id}/complete-early",
+    response_model=TaskOut,
+    summary="提前完成 (剩余 step SKIPPED + 调仙工 cancel + 解锁库存)",
+)
+async def complete_task_early(
+    task_id: int,
+    _: User = Depends(get_current_user),
+) -> TaskOut:
+    """语义见 dispatch_service.complete_early。
+    适用于调度类任务(business_type 非空),手动 ad-hoc 任务建议直接用 /cancel。
+    """
+    task = await dispatch_service.complete_early(task_id)
+    # complete_early 返回的 task 已经 prefetch 过
     return TaskOut.from_orm_with_agv(task)

@@ -154,6 +154,15 @@ AGV (admin 可写, operator 只读)
   POST   /api/v1/tasks/{task_id}/resume  继续 (仙工 3002)
   POST   /api/v1/tasks/{task_id}/cancel  取消 (仙工 3003)
 
+任务模板 (只读,B 阶段)
+  GET    /api/v1/task-templates          4 个内置模板列表
+  GET    /api/v1/task-templates/{code}   按 code 查模板详情 (含 steps 数组)
+
+呼叫调度 / 任务编排 (P4-C)
+  POST   /api/v1/call-points/{uuid}/dispatch  呼叫点触发一次任务 (选车+锁库+渲染+下发)
+  GET    /api/v1/tasks/{id}/detail            任务详情 (含 steps 数组,详情页用)
+  POST   /api/v1/tasks/{id}/complete-early    提前完成 (cancel + 剩余step SKIPPED + 解锁)
+
 物料字典
   GET    /api/v1/parts                   零件列表
   POST   /api/v1/parts                   新增零件                      [admin]
@@ -331,6 +340,136 @@ curl -X POST http://localhost:8000/api/v1/tasks/1/cancel -H "Authorization: Bear
 
 > 创建 WS 时会自动建一行 Inventory(EMPTY_SLOT),无需手工初始化。
 
+## 任务业务模型 (P4-B 数据层)
+
+> 本轮只完成"数据 + 模板"。下一轮 (P4-C) 接呼叫调度 + 详情页 UI。
+
+**Task 表新增业务字段** (全部 nullable,向后兼容旧手动任务):
+
+| 字段 | 说明 |
+|---|---|
+| `business_type` | 4 种业务枚举之一;手动 ad-hoc 任务可为空 |
+| `template_id` | 套用的模板;手动任务为空 |
+| `call_point_id` | 触发的呼叫点 |
+| `from_ws_id` / `to_ws_id` | 起点/终点库位 |
+| `part_id` / `pallet_type_id` | 零件 / 托盘 |
+| `inventory_id` | 锁定的库存行(任务结束清锁) |
+| `current_step_no` | 当前推进到第几步 |
+| `duration_sec` | 完成后由 finished-started 计算 |
+| `description` | 详情页直观描述 |
+
+**AGV 表新增运行时字段** (调度选车 + 心跳缓存):
+
+| 字段 | 说明 |
+|---|---|
+| `run_state` | `UNKNOWN/IDLE/RUNNING/PAUSED/CHARGING/LOW_BATTERY/OFFLINE/ERROR` |
+| `battery_level` | 0-100,心跳 worker 从仙工 1004 拉取并缓存 |
+| `low_battery_threshold` | 默认 20,低于此值不予派工 |
+| `current_task_uuid` | 当前在执行的 task.uuid |
+| `last_status_at` | 最近一次状态拉取时间 |
+
+**TaskTemplate 表** (4 条种子数据, `business_type` 唯一索引):
+
+| code | name | business_type |
+|---|---|---|
+| `SEND_EMPTY_TO_WS` | 呼叫点送空托至库位 | 1 |
+| `FETCH_MATERIAL_TO_CP` | 库位送物料至呼叫点 | 2 |
+| `FETCH_EMPTY_TO_CP` | 库位送空托至呼叫点 | 3 |
+| `SEND_MATERIAL_TO_WS` | 呼叫点送物料至库位 | 4 |
+
+`steps` JSON 数组,所有 4 个模板都用同一个 6 步骨架(顶升车):
+
+| step | module | operation | point_role |
+|---|---|---|---|
+| 0 | command | JackUnload | SELF (自检) |
+| 1 | path | pathNavigation | preStart |
+| 2 | command | JackLoad | start |
+| 3 | path | pathNavigation | preEnd |
+| 4 | command | JackUnload | end |
+| 5 | request | isEmpty | SELF (验证) |
+
+下一轮 C 阶段渲染时按 business_type 把 start/end 占位符翻译成真实站点:
+
+```
+SEND_EMPTY_TO_WS / SEND_MATERIAL_TO_WS:  start=call_point  end=to_ws
+FETCH_MATERIAL_TO_CP / FETCH_EMPTY_TO_CP: start=from_ws     end=call_point
+```
+
+**TaskStep 表** (一对多挂在 task 下):
+
+| 字段 | 说明 |
+|---|---|
+| `task_id / step_no` | 唯一索引 |
+| `module / operation / class_name / point_role / point_value / input` | 模板渲染后的最终值 |
+| `status` | `PENDING / RUNNING / DONE / FAILED / SKIPPED` (跳过用于"提前完成") |
+| `is_ok / error_msg / started_at / finished_at / duration_ms` | 执行结果 |
+
+**初始化模板** (幂等):
+
+```powershell
+.\.venv\Scripts\python.exe -m scripts.seed_task_templates           # 已存在跳过
+.\.venv\Scripts\python.exe -m scripts.seed_task_templates --reset   # 强制覆盖
+```
+
+## 呼叫调度 (P4-C)
+
+**整体流程**:
+
+```
+POST /call-points/{uuid}/dispatch
+  ├─ 校验呼叫点支持该业务
+  ├─ 按业务类型解析 part/pallet/source_ws/target_ws/inventory 上下文
+  ├─ 选 AGV: is_active + run_state ∈ {IDLE, UNKNOWN} + battery>=阈值 + current_task IS NULL
+  │    (可用 prefer_agv_uuid 显式指定)
+  ├─ 锁库存 (inventory.is_locked=True, locked_by_task_id=task.id)
+  ├─ 创建 Task + 6 个 TaskStep (PENDING),step0 自检本地标 DONE
+  ├─ 下发"取段" 3051 (target=start point_value, op=JackLoad)
+  │     成功 → status=RUNNING, current_step_no=2, step1/2 RUNNING
+  │     失败 → _abort: task FAILED + 所有未完成 step FAILED + 解锁 + AGV/CP 释放
+  └─ ↓ 等仙工 1020 task_status=4 (completed)
+```
+
+**task_poller 推进**:
+
+```
+task 完成上报 (seer_status=4)
+  ├─ task.current_step_no=2 → advance_task → 下发"放段" 3051 (target=end, op=JackUnload)
+  │                            step1/2 DONE, step3/4 RUNNING, current_step_no=4
+  ├─ task.current_step_no=4 → advance_task → step3/4/5 DONE → finalize_task
+  └─ finalize_task: status=COMPLETED + 解锁 + 推进 inventory 状态机 + AGV/CP 释放
+```
+
+**4 种业务完成后的库存状态机**:
+
+| 业务 | 操作对象 | 状态转移 |
+|---|---|---|
+| SEND_EMPTY_TO_WS | to_ws | EMPTY_SLOT → EMPTY_PALLET (写入 pallet_type) |
+| SEND_MATERIAL_TO_WS | to_ws | EMPTY_SLOT → FULL_MATERIAL (写入 part + pallet_type) |
+| FETCH_EMPTY_TO_CP | from_ws | EMPTY_PALLET → EMPTY_SLOT |
+| FETCH_MATERIAL_TO_CP | from_ws | FULL_MATERIAL → EMPTY_SLOT |
+
+**提前完成 (`POST /tasks/{id}/complete-early`)** 语义:
+
+- 调仙工 3003 cancel 让 AGV 停车 (仙工失败不阻塞收尾)
+- 所有 PENDING/RUNNING 的 step → SKIPPED (保留已 DONE 的)
+- task → COMPLETED + finalize (注意:不推进 inventory 状态机,只解锁)
+- AGV / CP 释放
+
+**心跳 worker (`agv_status_poller`)**:
+
+- 每 5s 并发拉所有 active AGV 的 1007 BATTERY + 1002 RUN + 1020 TASK
+- 写回 `AGV.battery_level / run_state / current_task_uuid / last_status_at`
+- 3 个请求全失败 → run_state=OFFLINE,current_task_uuid 清空
+- 本地有 RUNNING/PAUSED 任务时,run_state 锁定为对应状态(避免误判 IDLE)
+- 空闲 + battery < `low_battery_threshold` 时降级为 LOW_BATTERY (调度选车跳过)
+
+**已知局限** (留给下一轮):
+
+1. **没有自动选库位** —— SEND 类必须 user 指定 `target_ws_uuid`,FETCH 类只做了"找第一个匹配"
+2. **没有行级锁** —— 高并发场景两个 dispatch 可能选中同一台 AGV (P5 加 SELECT FOR UPDATE)
+3. **单步取消** —— complete_early 是"跳全部剩余 step",没有"只取消第 N 步"
+4. **没有详情页 UI** —— 任务详情接口已有 (`/tasks/{id}/detail`),Vue 接入前 Web 端待补
+
 ## 当前进度
 
 - [x] 项目骨架 / 仙工协议层 / TCP 客户端 / 连接池
@@ -343,9 +482,10 @@ curl -X POST http://localhost:8000/api/v1/tasks/1/cancel -H "Authorization: Bear
 - [x] **P1 物料字典: part / pallet_type / part_pallet_mapping**
 - [x] **P2 设施字典: ws / call_point + AGV 点位 + 多对多绑定**
 - [x] **P3 库存: inventory (随 WS 自动建,支持手动绑零件/空托)**
-- [ ] P4 业务编排: task_template 硬编码 4 模板 + 呼叫接口 (零件→库位→AGV→下发)
-- [ ] P5 锁 & 并发: inventory 真锁 + CP `current_task_id` + 任务结束回写库存
-- [ ] 呼叫点 / 库位 / 放料图 前端页 (Vue 接入前可先用简易 HTML)
+- [x] **P4-B 任务业务数据模型: Task 业务字段 + AGV 运行时字段 + TaskTemplate + TaskStep + 4 模板种子**
+- [x] **P4-C 呼叫调度后端: 心跳 worker + 分段下发(取段/放段) + advance + finalize + complete_early + 库存状态机回写**
+- [ ] **P4-D 任务详情页前端: 步骤列表 / 取消单步 / 提前完成 / 实时进度刷新**
+- [ ] P5 多车并发优化: 行级锁 / SELECT FOR UPDATE / 多 worker 实例去重
 - [ ] WebSocket 实时状态推送
-- [ ] 调度层 (派车 / 交管 / 自动充电)
+- [ ] 调度层增强 (自动选库位 / 交管 / 自动充电)
 - [ ] 前端 Vue (会替换掉 `app/web/`)

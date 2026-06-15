@@ -12,12 +12,19 @@ from typing import Any
 
 from app.connectors.seer.manager import seer_manager
 from app.models.agv import AGV
+from app.models.task import Task, TaskStatus
 from app.utils.exceptions import AGVNotFound, AppError
 
 
 class AGVUUIDConflict(AppError):
     code = 2003
     msg = "AGV uuid 已存在"
+    http_status = 409
+
+
+class AGVHasInflightTask(AppError):
+    code = 2004
+    msg = "AGV 还有未完成的任务,请先取消/完成后再删除"
     http_status = 409
 
 
@@ -73,8 +80,52 @@ async def disable_agv(uuid: str) -> AGV:
     return agv
 
 
-async def delete_agv_hard(uuid: str) -> None:
-    """硬删除 = 真正从表里 DELETE。仅 admin 可调用。"""
+async def set_active(uuid: str, active: bool) -> AGV:
+    """启用/停用 AGV。停用会同步丢弃 SEER 句柄,避免心跳继续访问。"""
     agv = await get_agv(uuid)
+    agv.is_active = active
+    if not active:
+        # 停用后立即把运行态归零,避免前端还显示旧的 RUNNING/IDLE
+        from app.models.agv import AGVRunState  # noqa: PLC0415
+        agv.run_state = AGVRunState.UNKNOWN
+        agv.battery_level = None
+        agv.current_task_uuid = None
+    await agv.save()
+    if not active:
+        await seer_manager.drop(agv.uuid)
+    return agv
+
+
+async def delete_agv_hard(uuid: str) -> None:
+    """硬删除 = 真正从表里 DELETE。仅 admin 可调用。
+
+    AGV 与 Task 是 RESTRICT FK,直接 delete 会被 MySQL 拒绝。
+    流程:
+      1) 若有 INIT/RUNNING/PAUSED 等"在跑"任务,直接 409,要求先收尾
+      2) 否则把该车的所有历史 task 一起删掉
+         - TaskStep.task CASCADE → step 自动跟随删除
+         - Inventory.locked_by_task / CallPoint.current_task 都是 SET_NULL,不会阻塞
+      3) 删 AGV;WSAgvPoint / CallPointAgvPoint 自动 CASCADE 清理
+      4) 关掉 SEER 连接句柄
+    """
+    agv = await get_agv(uuid)
+
+    inflight = await Task.filter(
+        agv_id=agv.id,
+        status__in=[TaskStatus.INIT, TaskStatus.RUNNING, TaskStatus.PAUSED],
+    ).count()
+    if inflight:
+        raise AGVHasInflightTask(
+            f"AGV {uuid} 还有 {inflight} 个未完成的任务,请先取消/完成后再删除"
+        )
+
+    deleted_tasks = await Task.filter(agv_id=agv.id).delete()
     await seer_manager.drop(agv.uuid)
     await agv.delete()
+    if deleted_tasks:
+        # 仅日志提示,接口本身只回成功
+        import logging
+
+        logging.getLogger(__name__).info(
+            "[delete_agv_hard] %s 同步删除历史任务 %d 条", uuid, deleted_tasks
+        )

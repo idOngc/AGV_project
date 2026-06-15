@@ -4,7 +4,7 @@ from datetime import datetime
 
 from pydantic import BaseModel, ConfigDict, Field, IPvAnyAddress
 
-from app.models.agv import AGVMode, AGVProtocolType
+from app.models.agv import AGVMode, AGVProtocolType, AGVRunState
 
 
 class AGVCreateIn(BaseModel):
@@ -59,7 +59,43 @@ class AGVOut(BaseModel):
     port_other: int
 
     is_active: bool
+
+    # 运行态(由 agv_status_poller 维护;前端用于显示在线状态、电量、当前任务)
+    run_state: AGVRunState = AGVRunState.UNKNOWN
+    run_state_label: str | None = None
+    battery_level: float | None = None
+    low_battery_threshold: float = 20.0
+    current_task_uuid: str | None = None
+    last_status_at: datetime | None = None
+
     created_at: datetime
     updated_at: datetime
 
     model_config = ConfigDict(from_attributes=True)
+
+    @classmethod
+    def from_orm_with_labels(cls, agv) -> "AGVOut":  # noqa: ANN001
+        """把 run_state 的英文枚举名也透传到 label 字段,前端直接展示。"""
+        return cls(
+            id=agv.id,
+            uuid=agv.uuid,
+            name=agv.name,
+            ip=str(agv.ip),
+            mode=agv.mode,
+            protocol=agv.protocol,
+            vendor_type=agv.vendor_type,
+            port_state=agv.port_state,
+            port_ctrl=agv.port_ctrl,
+            port_task=agv.port_task,
+            port_config=agv.port_config,
+            port_other=agv.port_other,
+            is_active=agv.is_active,
+            run_state=agv.run_state,
+            run_state_label=agv.run_state.name if agv.run_state is not None else None,
+            battery_level=agv.battery_level,
+            low_battery_threshold=agv.low_battery_threshold,
+            current_task_uuid=agv.current_task_uuid,
+            last_status_at=agv.last_status_at,
+            created_at=agv.created_at,
+            updated_at=agv.updated_at,
+        )

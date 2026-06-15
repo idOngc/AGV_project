@@ -345,16 +345,25 @@ pre {
 
 .slot-card {
     background: #fff;
-    border: 2px solid #28a745;
+    border: 2px solid #cfd4dc;
+    border-left: 6px solid #cfd4dc;
     border-radius: 6px;
     padding: 12px;
     font-size: 12px;
-    transition: box-shadow 0.15s;
+    transition: box-shadow 0.15s, border-color 0.2s;
 }
 
 .slot-card:hover {
-    box-shadow: 0 2px 8px rgba(40, 167, 69, 0.18);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.12);
 }
+
+/* 按库存状态着色卡片左边框 */
+.slot-card.inv-DISABLED      { border-left-color: #9aa0a6; }
+.slot-card.inv-EMPTY_SLOT    { border-left-color: #cfd4dc; }
+.slot-card.inv-EMPTY_PALLET  { border-left-color: #66c2a5; }
+.slot-card.inv-FULL_MATERIAL { border-left-color: #5dd1ce; }
+.slot-card.inv-PENDING_ALLOC { border-left-color: #ed4858; }
+.slot-card.inv-IN_USE        { border-left-color: #f4c44b; }
 
 .slot-card .slot-head {
     display: flex;
@@ -515,4 +524,110 @@ table.sub td {
     width: auto;
     margin: 0;
     display: inline;
+}
+
+/* ---------- 任务详情弹窗 (wide) ---------- */
+.modal.wide {
+    max-width: 900px;
+}
+
+/* 任务详情头部信息块 */
+.task-meta {
+    display: grid;
+    grid-template-columns: 110px 1fr 110px 1fr;
+    gap: 8px 16px;
+    font-size: 13px;
+    padding: 12px 14px;
+    background: #f7f8fa;
+    border: 1px solid #eef0f4;
+    border-radius: 6px;
+    margin-bottom: 16px;
+}
+
+.task-meta dt {
+    color: #6b7280;
+    font-weight: 500;
+}
+
+.task-meta dd {
+    color: #222;
+    overflow-wrap: anywhere;
+}
+
+/* task / step 状态徽章颜色 */
+.badge.task-status-INIT      { background: #cfd4dc; color: #333; }
+.badge.task-status-RUNNING   { background: #5b8def; color: #fff; }
+.badge.task-status-PAUSED    { background: #f4c44b; color: #333; }
+.badge.task-status-COMPLETED { background: #66c2a5; color: #fff; }
+.badge.task-status-FAILED    { background: #ed4858; color: #fff; }
+.badge.task-status-CANCELED  { background: #9aa0a6; color: #fff; }
+
+.badge.step-status-PENDING { background: #e0e3e9; color: #555; }
+.badge.step-status-RUNNING { background: #5b8def; color: #fff; }
+.badge.step-status-DONE    { background: #66c2a5; color: #fff; }
+.badge.step-status-FAILED  { background: #ed4858; color: #fff; }
+.badge.step-status-SKIPPED { background: #f4c44b; color: #333; }
+
+/* step 表格 */
+table.steps {
+    margin-top: 4px;
+    width: 100%;
+    border: 1px solid #eef0f4;
+    border-radius: 4px;
+    box-shadow: none;
+}
+
+table.steps th,
+table.steps td {
+    padding: 6px 10px;
+    font-size: 12px;
+    border-bottom: 1px solid #eef0f4;
+}
+
+table.steps tr.step-RUNNING {
+    background: #f0f6ff;
+}
+
+table.steps tr.step-DONE {
+    background: #f4faf6;
+}
+
+table.steps tr.step-FAILED {
+    background: #fcf2f3;
+}
+
+table.steps tr.step-SKIPPED {
+    background: #fdf8e9;
+}
+
+table.steps tr.step-PENDING {
+    background: #fff;
+    color: #888;
+}
+
+table.steps code {
+    background: #eef1f5;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 11px;
+}
+
+/* 调度入口弹窗:动态字段块 */
+.dispatch-fields {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    padding: 10px 12px;
+    background: #f7f8fa;
+    border-radius: 6px;
+    border: 1px dashed #d0d5dd;
+    margin-top: 8px;
+}
+
+.dispatch-fields.hidden {
+    display: none;
+}
+
+.dispatch-fields label {
+    margin: 0;
 }

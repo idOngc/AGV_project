@@ -27,12 +27,12 @@
                 状态
                 <select id="filterStatus">
                     <option value="">全部</option>
-                    <option value="0">INIT</option>
-                    <option value="1">RUNNING</option>
-                    <option value="2">PAUSED</option>
-                    <option value="3">COMPLETED</option>
-                    <option value="4">FAILED</option>
-                    <option value="5">CANCELED</option>
+                    <option value="0">INIT 待下发</option>
+                    <option value="1">RUNNING 执行中</option>
+                    <option value="2">PAUSED 已暂停</option>
+                    <option value="3">COMPLETED 已完成</option>
+                    <option value="4">FAILED 失败</option>
+                    <option value="5">CANCELED 已取消</option>
                 </select>
             </label>
 
@@ -49,9 +49,9 @@
                 <tr>
                     <th>#ID</th>
                     <th>AGV</th>
-                    <th>类型</th>
-                    <th>目标点</th>
-                    <th>动作</th>
+                    <th>业务 / 模板</th>
+                    <th>进度</th>
+                    <th>目标</th>
                     <th>状态</th>
                     <th>创建</th>
                     <th>完成</th>
@@ -63,13 +63,15 @@
         <p class="muted" style="margin-top: 8px;" id="emptyHint"></p>
     </main>
 
-    <!-- 任务详情弹窗 -->
+    <!-- ===== 任务详情弹窗 (P4-D 主舞台) ===== -->
     <div class="modal-mask hidden" id="detailModal">
-        <div class="modal">
+        <div class="modal wide">
             <h3 id="detailTitle">任务详情</h3>
-            <pre id="detailBody">加载中...</pre>
+            <div id="detailBody">加载中...</div>
             <div class="modal-actions">
-                <button type="button" class="ghost" data-close="detailModal">关闭</button>
+                <button type="button" class="secondary" id="detailRefreshBtn">刷新</button>
+                <button type="button" class="danger" id="completeEarlyBtn" style="display:none;">提前完成</button>
+                <button type="button" class="ghost" data-close="detailModal" id="detailCloseBtn">关闭</button>
             </div>
         </div>
     </div>
@@ -79,32 +81,11 @@
         App.renderTopbar("任务历史", "tasks.html");
         App.bindModalCloseButtons();
         const api = App.api;
-        const user = App.user;
-        const showModal = App.showModal;
-        const hideModal = App.hideModal;
+        const fmtTime = App.fmtTime;
+        const esc = App.escapeHtml;
 
-        //     渲染 
-        const STATUS_NAME = {
-            0: "INIT", 1: "RUNNING", 2: "PAUSED",
-            3: "COMPLETED", 4: "FAILED", 5: "CANCELED"
-        };
-        const STATUS_BADGE = {
-            0: "unknown", 1: "on", 2: "unknown",
-            3: "on", 4: "off", 5: "off"
-        };
-        const TYPE_NAME = {
-            1: "NAVIGATE", 2: "JACK_LOAD", 3: "JACK_UNLOAD",
-            4: "FORK_LOAD", 5: "FORK_UNLOAD",
-            6: "ROLLER_LOAD", 7: "ROLLER_UNLOAD",
-            99: "CUSTOM"
-        };
-
-        function fmtTime(s) {
-            if (!s) return "-";
-            const d = new Date(s);
-            const pad = n => String(n).padStart(2, "0");
-            return `${pad(d.getMonth()+1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-        }
+        let currentDetailTaskId = null;
+        let detailRefreshTimer = null;
 
         async function loadAgvOptions() {
             try {
@@ -121,6 +102,35 @@
             }
         }
 
+        function renderBusinessCell(t) {
+            if (t.business_type) {
+                const short = App.btLabel(t.business_type, "short");
+                const long  = App.btLabel(t.business_type, "long");
+                const tpl   = t.template_code ? `<div class="muted" style="font-size:11px;">${esc(t.template_code)}</div>` : "";
+                return `<span class="badge on" title="${esc(long)}" style="background:#e6f0ff;color:#2a4a8a;">${esc(short)}</span>${tpl}`;
+            }
+            // 手动 ad-hoc 任务
+            return `<span class="muted">手动 · ${esc(App.TASK_TYPE_NAME[t.type] || t.type)}</span>`;
+        }
+
+        function renderProgressCell(t) {
+            if (t.business_type) {
+                // 调度任务总共 6 步;不同 current_step_no 对应进度
+                return `<span class="muted">step ${t.current_step_no}/5</span>`;
+            }
+            return `<span class="muted">-</span>`;
+        }
+
+        function renderTargetCell(t) {
+            if (t.business_type) {
+                const from = t.from_ws_name ? `<div class="muted">from ${esc(t.from_ws_name)}</div>` : "";
+                const to   = t.to_ws_name   ? `<div class="muted">to ${esc(t.to_ws_name)}</div>`   : "";
+                const cp   = t.call_point_name ? `<div class="muted">CP ${esc(t.call_point_name)}</div>` : "";
+                return cp + from + to;
+            }
+            return `<code>${esc(t.target_point)}</code>${t.operation ? `<div class="muted">${esc(t.operation)}</div>` : ""}`;
+        }
+
         async function loadTasks() {
             const tbody = document.querySelector("#taskTable tbody");
             const hint = document.getElementById("emptyHint");
@@ -135,33 +145,38 @@
                 const tasks = await api("GET", "/api/v1/tasks?" + params.toString());
                 if (tasks.length === 0) {
                     tbody.innerHTML = "";
-                    hint.textContent = "没有匹配的任务。在 AGV 控制台点「下发任务」可以创建一个。";
+                    hint.textContent = "没有匹配的任务。可以在 AGV 控制台点「下发任务」或在呼叫点页点「呼叫」。";
                     return;
                 }
                 hint.textContent = "";
                 tbody.innerHTML = tasks.map(t => {
-                    const canPause  = t.status === 1;
-                    const canResume = t.status === 2;
-                    const canCancel = t.status === 1 || t.status === 2;
+                    const ts = App.taskStatus(t.status);
+                    const canPause   = t.status === 1;
+                    const canResume  = t.status === 2;
+                    const canCancel  = t.status === 1 || t.status === 2;
+                    const canEarlyDone = (t.status === 1 || t.status === 2) && !!t.business_type;
+                    const err = t.error_msg
+                        ? `<div class="muted" title="${esc(t.error_msg)}">${esc(t.error_msg.substring(0,40))}${t.error_msg.length>40?'…':''}</div>`
+                        : "";
                     return `
                     <tr data-id="${t.id}">
                         <td><a href="#" data-act="detail" data-id="${t.id}">#${t.id}</a></td>
-                        <td>${t.agv_name} <span class="muted">(${t.agv_uuid})</span></td>
-                        <td>${TYPE_NAME[t.type] || t.type}</td>
-                        <td><code>${t.target_point}</code></td>
-                        <td>${t.operation || "-"}</td>
+                        <td>${esc(t.agv_name)} <span class="muted">(${esc(t.agv_uuid)})</span></td>
+                        <td>${renderBusinessCell(t)}</td>
+                        <td>${renderProgressCell(t)}</td>
+                        <td>${renderTargetCell(t)}</td>
                         <td>
-                            <span class="badge ${STATUS_BADGE[t.status] || 'unknown'}">
-                                ${STATUS_NAME[t.status] || t.status}
-                            </span>
-                            ${t.error_msg ? `<div class="muted" title="${escapeHtml(t.error_msg)}">${escapeHtml(t.error_msg.substring(0,40))}${t.error_msg.length>40?'…':''}</div>` : ""}
+                            <span class="badge ${ts.cls}">${ts.cn}</span>
+                            ${err}
                         </td>
                         <td class="muted">${fmtTime(t.created_at)}</td>
                         <td class="muted">${fmtTime(t.finished_at)}</td>
                         <td class="actions">
-                            <button data-act="pause"  data-id="${t.id}" class="secondary" ${canPause?"":"disabled"}>暂停</button>
-                            <button data-act="resume" data-id="${t.id}" class="secondary" ${canResume?"":"disabled"}>继续</button>
-                            <button data-act="cancel" data-id="${t.id}" class="danger"    ${canCancel?"":"disabled"}>取消</button>
+                            <button data-act="detail"  data-id="${t.id}" class="secondary">详情</button>
+                            <button data-act="pause"   data-id="${t.id}" class="secondary" ${canPause?"":"disabled"}>暂停</button>
+                            <button data-act="resume"  data-id="${t.id}" class="secondary" ${canResume?"":"disabled"}>继续</button>
+                            <button data-act="cancel"  data-id="${t.id}" class="danger"    ${canCancel?"":"disabled"}>取消</button>
+                            ${canEarlyDone ? `<button data-act="early" data-id="${t.id}" class="danger">提前完成</button>` : ""}
                         </td>
                     </tr>
                     `;
@@ -171,33 +186,29 @@
             }
         }
 
-        function escapeHtml(s) {
-            return String(s).replace(/[&<>"']/g, c => ({
-                "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"
-            }[c]));
-        }
-
         //  行内动作 
         document.querySelector("#taskTable").addEventListener("click", async (e) => {
-            const a = e.target.closest("a[data-act]");
+            const a   = e.target.closest("a[data-act]");
             const btn = e.target.closest("button[data-act]");
             const node = a || btn;
             if (!node) return;
             if (a) e.preventDefault();
 
-            const id = node.dataset.id;
+            const id  = node.dataset.id;
             const act = node.dataset.act;
-            if (act === "detail") {
-                await showDetail(id);
-                return;
-            }
-            const labels = { pause: "暂停", resume: "继续", cancel: "取消" };
-            if (act === "cancel" && !confirm(`确认取消任务 #${id}? AGV 会停在当前位置。`)) return;
+            if (act === "detail") { await openDetail(id); return; }
+
+            const labels = { pause: "暂停", resume: "继续", cancel: "取消", early: "提前完成" };
+            if ((act === "cancel" || act === "early") &&
+                !confirm(`确认${labels[act]}任务 #${id}? AGV 会停在当前位置。`)) return;
             btn.disabled = true;
             const orig = btn.textContent;
             btn.textContent = labels[act] + "中...";
             try {
-                await api("POST", `/api/v1/tasks/${id}/${act}`);
+                const url = act === "early"
+                    ? `/api/v1/tasks/${id}/complete-early`
+                    : `/api/v1/tasks/${id}/${act}`;
+                await api("POST", url);
                 await loadTasks();
             } catch (err) {
                 alert(`${labels[act]} 失败: ${err.message}`);
@@ -206,35 +217,130 @@
             }
         });
 
-        async function showDetail(id) {
-            document.getElementById("detailTitle").textContent = `任务详情 · #${id}`;
+        /* ============ 详情弹窗 ============ */
+
+        function fmtMs(ms) {
+            if (!ms) return "-";
+            if (ms < 1000) return `${ms}ms`;
+            return `${(ms / 1000).toFixed(1)}s`;
+        }
+
+        function renderTaskDetail(d) {
+            const ts = App.taskStatus(d.status);
+            const bt = d.business_type ? App.btLabel(d.business_type, "long") : "(手动任务)";
+            // 详情卡片
+            const meta = `
+                <dl class="task-meta">
+                    <dt>任务 UUID</dt>      <dd><code>${esc(d.uuid)}</code></dd>
+                    <dt>AGV</dt>            <dd>${esc(d.agv_name)} (${esc(d.agv_uuid)})</dd>
+                    <dt>业务类型</dt>       <dd>${esc(bt)}${d.template_code ? ` <span class="muted">[${esc(d.template_code)}]</span>` : ""}</dd>
+                    <dt>状态</dt>           <dd><span class="badge ${ts.cls}">${ts.cn}</span></dd>
+                    <dt>呼叫点</dt>         <dd>${d.call_point_name ? esc(d.call_point_name) : '<span class="muted">-</span>'}</dd>
+                    <dt>当前 step</dt>      <dd>${d.current_step_no}/5</dd>
+                    <dt>起点库位</dt>       <dd>${d.from_ws_name ? esc(d.from_ws_name) : '<span class="muted">-</span>'}</dd>
+                    <dt>终点库位</dt>       <dd>${d.to_ws_name   ? esc(d.to_ws_name)   : '<span class="muted">-</span>'}</dd>
+                    <dt>零件</dt>           <dd>${d.part_name ? esc(d.part_name) : '<span class="muted">-</span>'}</dd>
+                    <dt>托盘类型</dt>       <dd>${d.pallet_type_name ? esc(d.pallet_type_name) : '<span class="muted">-</span>'}</dd>
+                    <dt>创建</dt>           <dd class="muted">${fmtTime(d.created_at)}</dd>
+                    <dt>开始</dt>           <dd class="muted">${fmtTime(d.started_at)}</dd>
+                    <dt>完成</dt>           <dd class="muted">${fmtTime(d.finished_at)}</dd>
+                    <dt>总耗时</dt>         <dd>${d.duration_sec ? d.duration_sec + "s" : "-"}</dd>
+                    <dt>描述</dt>           <dd>${d.description ? esc(d.description) : '<span class="muted">-</span>'}</dd>
+                    <dt>错误</dt>           <dd>${d.error_msg ? `<span class="error">${esc(d.error_msg)}</span>` : '<span class="muted">-</span>'}</dd>
+                </dl>`;
+
+            // step 表格
+            const steps = (d.steps || []).map(s => {
+                const ss = App.stepStatus(s.status);
+                return `
+                <tr class="step-${ss.cls.replace('step-status-','')}">
+                    <td>${s.step_no}</td>
+                    <td><code>${esc(s.module)}</code></td>
+                    <td>${esc(s.operation || "-")}</td>
+                    <td>${esc(s.point_role || "-")}</td>
+                    <td>${s.point_value ? `<code>${esc(s.point_value)}</code>` : '<span class="muted">本地</span>'}</td>
+                    <td><span class="badge ${ss.cls}">${ss.name}</span></td>
+                    <td class="muted">${fmtMs(s.duration_ms)}</td>
+                    <td class="muted">${fmtTime(s.started_at)}</td>
+                    <td class="muted">${fmtTime(s.finished_at)}</td>
+                    <td>${s.error_msg ? `<span class="error" title="${esc(s.error_msg)}">${esc(s.error_msg.substring(0,30))}${s.error_msg.length>30?'…':''}</span>` : ""}</td>
+                </tr>`;
+            }).join("");
+
+            const stepsTable = `
+                <h4 style="font-size:13px;color:#2a4a8a;margin:4px 0 6px;">步骤明细 (${d.steps ? d.steps.length : 0})</h4>
+                <table class="steps">
+                    <thead>
+                        <tr>
+                            <th>#</th><th>module</th><th>op</th><th>角色</th><th>站点</th>
+                            <th>状态</th><th>耗时</th><th>开始</th><th>完成</th><th>错误</th>
+                        </tr>
+                    </thead>
+                    <tbody>${steps || `<tr><td colspan="10" class="muted">无 step</td></tr>`}</tbody>
+                </table>`;
+
+            return meta + stepsTable;
+        }
+
+        async function fetchAndRender(id) {
             const body = document.getElementById("detailBody");
-            body.textContent = "加载中...";
-            showModal("detailModal");
             try {
-                const data = await api("GET", `/api/v1/tasks/${id}`);
-                body.textContent = JSON.stringify(data, null, 2);
+                const d = await api("GET", `/api/v1/tasks/${id}/detail`);
+                body.innerHTML = renderTaskDetail(d);
+                const btn = document.getElementById("completeEarlyBtn");
+                const canEarly = (d.status === 1 || d.status === 2) && !!d.business_type;
+                btn.style.display = canEarly ? "" : "none";
+                btn.dataset.id = id;
             } catch (e) {
-                body.textContent = "查询失败: " + e.message;
+                body.innerHTML = `<div class="error">加载失败: ${esc(e.message)}</div>`;
             }
         }
+
+        async function openDetail(id) {
+            currentDetailTaskId = id;
+            document.getElementById("detailTitle").textContent = `任务详情 · #${id}`;
+            document.getElementById("detailBody").textContent = "加载中...";
+            document.getElementById("completeEarlyBtn").style.display = "none";
+            App.showModal("detailModal");
+            await fetchAndRender(id);
+            // 详情打开期间 2s 轮询
+            if (detailRefreshTimer) clearInterval(detailRefreshTimer);
+            detailRefreshTimer = setInterval(() => {
+                if (currentDetailTaskId) fetchAndRender(currentDetailTaskId);
+            }, 2000);
+        }
+
+        function stopDetailRefresh() {
+            if (detailRefreshTimer) { clearInterval(detailRefreshTimer); detailRefreshTimer = null; }
+            currentDetailTaskId = null;
+        }
+
+        document.getElementById("detailRefreshBtn").addEventListener("click", () => {
+            if (currentDetailTaskId) fetchAndRender(currentDetailTaskId);
+        });
+        document.getElementById("detailCloseBtn").addEventListener("click", stopDetailRefresh);
+
+        document.getElementById("completeEarlyBtn").addEventListener("click", async () => {
+            const id = document.getElementById("completeEarlyBtn").dataset.id;
+            if (!id) return;
+            if (!confirm(`确认提前完成任务 #${id}?\n会调仙工 cancel + 剩余 step 标 SKIPPED + 解锁库存。`)) return;
+            try {
+                await api("POST", `/api/v1/tasks/${id}/complete-early`);
+                await fetchAndRender(id);
+                await loadTasks();
+            } catch (err) {
+                alert("提前完成失败: " + err.message);
+            }
+        });
 
         //  过滤器 & 自动刷新 
         document.getElementById("refreshBtn").addEventListener("click", loadTasks);
         document.getElementById("filterAgv").addEventListener("change", loadTasks);
         document.getElementById("filterStatus").addEventListener("change", loadTasks);
-
-        let autoTimer = null;
-        function setupAutoRefresh() {
-            if (autoTimer) { clearInterval(autoTimer); autoTimer = null; }
-            if (document.getElementById("autoRefresh").checked) {
-                autoTimer = setInterval(loadTasks, 3000);
-            }
-        }
-        document.getElementById("autoRefresh").addEventListener("change", setupAutoRefresh);
+        App.makeAutoRefresh(loadTasks, 3000, "autoRefresh")();
 
         //  首屏 
-        loadAgvOptions().then(loadTasks).then(setupAutoRefresh);
+        loadAgvOptions().then(loadTasks);
     </script>
 </body>
 </html>

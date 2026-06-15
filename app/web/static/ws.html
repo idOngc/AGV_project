@@ -199,13 +199,13 @@
                         <td>${w.id}</td>
                         <td>${App.escapeHtml(w.code)}</td>
                         <td>${App.escapeHtml(w.name || "-")}</td>
-                        <td>${App.WS_TYPE_NAME[w.ws_type] || w.ws_type}</td>
+                        <td>${App.lookup(App.WS_TYPE_NAME, w.ws_type)}</td>
                         <td class="muted">
-                            ${w.allow_empty_pallet ? "空托" : ""}
-                            ${w.allow_full_material ? " 满料" : ""}
-                            ${w.allow_defect ? " 不良" : ""}
+                            ${w.allow_empty_pallet ? "空托 " : ""}
+                            ${w.allow_full_material ? "满料 " : ""}
+                            ${w.allow_defect ? "不良" : ""}
                         </td>
-                        <td>${App.PALLET_BIND_MODE_NAME[w.bind_pallet_mode] || w.bind_pallet_mode}</td>
+                        <td>${App.lookup(App.PALLET_BIND_MODE_NAME, w.bind_pallet_mode)}</td>
                         <td class="muted">${w.pallet_type_ids.map(id => App.escapeHtml(ptMap.get(id) || id)).join(", ") || "-"}</td>
                         <td>${w.priority}</td>
                         <td><span class="badge ${w.is_active ? "on" : "off"}">${w.is_active ? "启用" : "禁用"}</span></td>
@@ -213,6 +213,7 @@
                             ${role === "admin" ? `
                                 <button data-act="edit"   data-uuid="${w.uuid}" class="secondary">编辑</button>
                                 <button data-act="points" data-uuid="${w.uuid}" data-name="${App.escapeHtml(w.code)}" class="secondary">AGV点位 (${w.agv_points.length})</button>
+                                <button data-act="toggle" data-uuid="${w.uuid}" data-active="${w.is_active}" class="${w.is_active ? 'secondary' : ''}">${w.is_active ? "停用" : "启用"}</button>
                                 <button data-act="del"    data-uuid="${w.uuid}" class="danger">删除</button>
                             ` : `
                                 <button data-act="points" data-uuid="${w.uuid}" data-name="${App.escapeHtml(w.code)}" class="secondary">查看点位</button>
@@ -288,6 +289,11 @@
             } else if (act === "del") {
                 if (!confirm(`确认删除库位 ${uuid}? 关联的库存与点位会一并删除。`)) return;
                 try { await api("DELETE", `/api/v1/ws/${uuid}`); await loadWs(); }
+                catch (err) { alert(err.message); }
+            } else if (act === "toggle") {
+                const next = btn.dataset.active !== "true";
+                if (!confirm(`确认${next ? "启用" : "停用"}库位 ${uuid}?${next ? "" : "\n停用后该库位不会出现在调度自动检索结果中。"}`)) return;
+                try { await api("POST", `/api/v1/ws/${uuid}/toggle-active?active=${next}`); await loadWs(); }
                 catch (err) { alert(err.message); }
             } else if (act === "points") {
                 await openPoints(uuid, btn.dataset.name);

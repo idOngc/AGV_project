@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, status
 
 from app.api.deps import get_current_user, require_admin_dep
 from app.models.user import User
+from app.schemas.dispatch import DispatchIn
 from app.schemas.facility import (
     AgvPointIn,
     AgvPointOut,
@@ -13,7 +14,8 @@ from app.schemas.facility import (
     CallPointOut,
     CallPointUpdateIn,
 )
-from app.services import facility_service
+from app.schemas.task import TaskOut
+from app.services import dispatch_service, facility_service, task_service
 
 router = APIRouter()
 
@@ -34,6 +36,7 @@ def _cp_to_out(cp, extras: dict) -> CallPointOut:
         current_task_id=cp.current_task_id,
         is_active=cp.is_active,
         business_types=extras["business_types"],
+        pallet_type_ids=extras.get("pallet_type_ids", []),
         agv_points=[AgvPointOut.model_validate(p) for p in extras["agv_points"]],
         created_at=cp.created_at,
         updated_at=cp.updated_at,
@@ -100,6 +103,17 @@ async def delete_call_point(
     return {"deleted": uuid}
 
 
+@router.post("/{uuid}/toggle-active", response_model=CallPointOut, summary="启用/停用呼叫点")
+async def toggle_call_point_active(
+    uuid: str,
+    active: bool = Query(..., description="true=启用,false=停用"),
+    _: User = Depends(require_admin_dep),
+) -> CallPointOut:
+    cp = await facility_service.set_call_point_active(uuid, active)
+    extras = await facility_service.get_call_point_extras(cp)
+    return _cp_to_out(cp, extras)
+
+
 # -- AGV 点位子接口 --
 
 
@@ -141,3 +155,37 @@ async def delete_cp_point(
 ) -> dict:
     await facility_service.delete_call_point_agv_point(point_id)
     return {"deleted": point_id}
+
+
+# -- 呼叫调度 (P4-C) --
+
+
+@router.post(
+    "/{uuid}/dispatch",
+    response_model=TaskOut,
+    status_code=status.HTTP_201_CREATED,
+    summary="呼叫调度:从呼叫点触发一次任务",
+)
+async def dispatch_call(
+    uuid: str,
+    payload: DispatchIn,
+    _: User = Depends(get_current_user),
+) -> TaskOut:
+    """触发流程:
+      1) 校验呼叫点支持该业务
+      2) 按业务类型解析 part/pallet/source_ws/target_ws/inventory 上下文
+      3) 选 IDLE + 电量足够的 AGV (或用 prefer_agv_uuid 指定)
+      4) 锁库存,创建 Task + TaskStep(全部 PENDING),将 step 0 自检直接置 DONE
+      5) 下发"取段" (3051 → start 点 + JackLoad),step 1/2 转 RUNNING
+      6) 后续由 task_poller 检测取段完成后 advance 到"放段",再 finalize
+    """
+    task = await dispatch_service.dispatch_from_call_point(
+        call_point_uuid=uuid,
+        business_type=payload.business_type,
+        part_uuid=payload.part_uuid,
+        pallet_type_uuid=payload.pallet_type_uuid,
+        prefer_agv_uuid=payload.prefer_agv_uuid,
+    )
+    # 重新查一次以带上 prefetch 关系
+    fresh = await task_service.get_task(task.id)
+    return TaskOut.from_orm_with_agv(fresh)

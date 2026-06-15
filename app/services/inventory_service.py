@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from app.models.facility import WS
+from app.models.facility import WS, WSPalletTypeBinding
 from app.models.inventory import Inventory, InventoryStatus
 from app.models.material import PalletType, Part, PartPalletMapping
 from app.utils.exceptions import (
@@ -191,4 +191,53 @@ async def find_ws_with_empty_pallet(
     )
     if pallet_type_id is not None:
         qs = qs.filter(pallet_type_id=pallet_type_id)
+    return await qs.first()
+
+
+async def find_empty_pallet_for_part(part_id: int) -> Inventory | None:
+    """按零件号找一个可入库使用的空托:
+      EMPTY_PALLET + 未锁 + 库位启用 + 托盘类型 ∈ part_pallet_mapping(part).
+    用于 FETCH_EMPTY_TO_CP 场景:呼叫点要"按零件号取空托",前提先查这个零件能用什么托盘。
+    """
+    pallet_type_ids = await PartPalletMapping.filter(
+        part_id=part_id, is_active=True
+    ).values_list("pallet_type_id", flat=True)
+    if not pallet_type_ids:
+        return None
+    qs = (
+        Inventory.all()
+        .filter(
+            status=InventoryStatus.EMPTY_PALLET,
+            is_locked=False,
+            ws__is_active=True,
+            pallet_type_id__in=list(pallet_type_ids),
+        )
+        .prefetch_related("ws", "part", "pallet_type")
+        .order_by("-ws__priority", "ws_id")
+    )
+    return await qs.first()
+
+
+async def find_empty_slot_for_pallet(pallet_type_id: int) -> Inventory | None:
+    """找一个能放该 pallet_type 的空库位 (EMPTY_SLOT + allow_empty_pallet + 未锁 + 启用 +
+    pallet_type ∈ WS↔PalletType 绑定)。
+    供 SEND_EMPTY_TO_WS / SEND_MATERIAL_TO_WS 共用。
+    """
+    allowed_ws_ids = await WSPalletTypeBinding.filter(
+        pallet_type_id=pallet_type_id
+    ).values_list("ws_id", flat=True)
+    if not allowed_ws_ids:
+        return None
+    qs = (
+        Inventory.all()
+        .filter(
+            status=InventoryStatus.EMPTY_SLOT,
+            is_locked=False,
+            ws__is_active=True,
+            ws__allow_empty_pallet=True,
+            ws_id__in=list(allowed_ws_ids),
+        )
+        .prefetch_related("ws", "part", "pallet_type")
+        .order_by("-ws__priority", "ws_id")
+    )
     return await qs.first()

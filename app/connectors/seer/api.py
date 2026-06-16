@@ -136,6 +136,88 @@ class SeerAPI(AGVConnector):
     async def get_task_state(self) -> dict[str, Any]:
         return (await self._request(StateMsg.TASK_REQ)).body
 
+    async def get_all_in_one(self) -> dict[str, Any]:
+        """1100 ALL1_REQ —— 一次拉所有状态(位姿/电量/jack/IO 等)。"""
+        return (await self._request(StateMsg.ALL1_REQ)).body
+
+    async def get_jack_state(self) -> dict[str, Any]:
+        """读 AGV 当前顶升机构状态,做"任务前自检"用。
+
+        返回:
+          {
+            "is_up":    bool | None,   # True=未复位(危险),False=已下降可执行,None=读不到
+            "height":   float | None,  # 顶升器当前高度(米),容错过几种字段名
+            "raw_state":int   | None,  # 厂家 jack_state 枚举原始值(仅记录,不参与判定)
+            "source":   str   | None,  # 实际用了哪个字段(便于排查)
+            "raw":      dict           # 原始 payload,异常排查用
+          }
+
+        判据(单一可信信号):
+          - 只用 jack 高度(物理量,跨固件语义一致):
+              height > 5mm  → is_up=True  (未复位)
+              height ≤ 5mm  → is_up=False (已复位)
+              高度完全读不到 → is_up=None  (上层按"未知不阻塞"处理)
+          - jack_state 枚举各家固件含义不同(常见 0/1/2/3 既可能是 Up/Down/Moving,
+            也可能是 None/Up中/Down中/Idle),不可靠,只记录不判定。
+
+        策略:优先 1100 ALL1_REQ;不行降级 1002 run_state;再不行返回 is_up=None。
+        """
+        raw: dict[str, Any] = {}
+        try:
+            raw = await self.get_all_in_one()
+        except SeerClientError:
+            try:
+                raw = await self.get_run_state()
+            except SeerClientError:
+                return {
+                    "is_up": None, "height": None,
+                    "raw_state": None, "source": None, "raw": {},
+                }
+
+        state_keys = ("jack_state", "jackState", "jackStatus")
+        height_keys = ("jack_height", "jackHeight", "lift_height", "liftHeight", "fork_height", "forkHeight")
+
+        def _pick(keys: tuple[str, ...]):
+            for k in keys:
+                v = raw.get(k)
+                if v is not None:
+                    return k, v
+            return None, None
+
+        sk, sv = _pick(state_keys)
+        hk, hv = _pick(height_keys)
+
+        height: float | None = None
+        if hv is not None:
+            try:
+                height = float(hv)
+            except (TypeError, ValueError):
+                height = None
+
+        raw_state: int | None = None
+        if sv is not None:
+            try:
+                raw_state = int(sv)
+            except (TypeError, ValueError):
+                raw_state = None
+
+        is_up: bool | None
+        source: str | None
+        if height is not None:
+            is_up = height > 0.005
+            source = hk
+        else:
+            is_up = None
+            source = None
+
+        return {
+            "is_up": is_up,
+            "height": height,
+            "raw_state": raw_state,
+            "source": source,
+            "raw": raw,
+        }
+
     async def snapshot(self) -> dict[str, Any]:
         """
         并发拉电量/位置/速度/运行/任务,拼一份对齐文档的实时状态结构。

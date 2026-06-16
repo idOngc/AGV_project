@@ -476,12 +476,46 @@ async def dispatch_from_call_point(
         await _abort(task, inventory, agv, call_point, "渲染后找不到 step 2 (取段)")
         raise StepRenderError("渲染后找不到 step 2 / 缺少 point_value")
 
-    # step 0 自检本地直接 DONE
+    # step 0 真自检 —— 在下发 3051 之前,读 AGV 当前顶升机构状态。
+    # 若 jack 处于 UP/Moving(未复位),直接拒发,避免后续 JackLoad 在仙工端
+    # 报"顶升机构无法重复顶升"导致整车 ERROR。
+    # 通信读不到状态时 is_up=None,按"未知 → 不阻塞"处理(避免读不到时业务全断)。
     self_check = next((s for s in step_objs if s.step_no == 0), None)
     if self_check:
+        now_chk = _now()
+        self_check.started_at = now_chk
+        jack_info: dict[str, Any] = {"is_up": None, "source": None, "raw_state": None, "height": None}
+        try:
+            api = await seer_manager.get(agv)
+            jack_info = await asyncio.wait_for(api.get_jack_state(), timeout=3.0)
+        except (SeerClientError, asyncio.TimeoutError) as e:
+            log.warning(
+                "[selfCheck] task#%s 读 AGV %s jack 状态失败,跳过自检(原样下发): %r",
+                task.id, agv.uuid, e,
+            )
+
+        if jack_info.get("is_up") is True:
+            h = jack_info.get("height")
+            h_mm = f"{h * 1000:.0f}mm" if isinstance(h, (int, float)) else "?"
+            msg = (
+                f"自检未通过:AGV {agv.uuid} 顶升机构未复位 "
+                f"(当前高度 {h_mm}, raw_state={jack_info.get('raw_state')}); "
+                f"请手动 JackUnload 复位后重试。"
+            )
+            self_check.status = TaskStepStatus.FAILED
+            self_check.is_ok = False
+            self_check.error_msg = msg[:480]
+            self_check.finished_at = _now()
+            self_check.input = {"jack": {k: v for k, v in jack_info.items() if k != "raw"}}
+            await self_check.save()
+            await _abort(task, inventory, agv, call_point, msg)
+            raise DispatchError(msg)
+
         self_check.status = TaskStepStatus.DONE
         self_check.is_ok = True
-        self_check.started_at = self_check.finished_at = _now()
+        self_check.finished_at = _now()
+        # 留个底:把读到的 jack 信息塞进 step.input 里方便事后排查
+        self_check.input = {"jack": {k: v for k, v in jack_info.items() if k != "raw"}}
         await self_check.save()
 
     # 标 step 1, 2 RUNNING

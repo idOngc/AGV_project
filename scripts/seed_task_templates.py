@@ -53,9 +53,6 @@ from app.models.task import TaskTemplate
 # 4 种业务都共用这套 step 结构,起终点占位用 start/end,渲染时按业务码映射
 _JACK_STEPS: list[dict] = [
     {
-        # 本地自检 step —— dispatch_service 会直接标 DONE,不会真的下发到 SEER。
-        # 不要再叫 "JackUnload",前端会让人误以为"每次任务都先卸了一次货";
-        # 改成语义明确的 "selfCheck" 即可,业务行为不变。
         "step_no": 0,
         "module": "check",
         "operation": "selfCheck",

@@ -81,7 +81,7 @@ class AGVStatusPoller:
                 api = await seer_manager.get(agv)
                 # 并发拉 3 项:电量 / 运行 / 任务
                 battery, run_state, task_state = await asyncio.gather(
-                    api.get_battery(simple=True),
+                    api.get_battery(simple=True), 
                     api.get_run_state(),
                     api.get_task_state(),
                     return_exceptions=True,
@@ -177,7 +177,7 @@ class AGVStatusPoller:
             and agv.battery_level < agv.low_battery_threshold
         ):
             new_run_state = AGVRunState.LOW_BATTERY
-
+        
         agv.run_state = new_run_state
         agv.last_status_at = now
         await agv.save(

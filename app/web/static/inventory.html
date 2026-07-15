@@ -132,8 +132,8 @@
                 grid.innerHTML = `<p class="muted">还没有库位,请先去「库位管理」创建。</p>`;
                 return;
             }
-            const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
-            const ptMap = new Map(cachedPts.map(p => [p.id, p.code]));
+            const partMap = new Map(cachedParts.map(p => [p.id, p.name || p.code]));
+            const ptMap = new Map(cachedPts.map(p => [p.id, p.name || p.code]));
 
             grid.innerHTML = items.map(({ ws, inv }) => {
                 const partCode = inv && inv.part_id ? partMap.get(inv.part_id) || "—" : "";
@@ -203,10 +203,10 @@
             // 填零件下拉
             const psel = document.getElementById("bindPart");
             psel.innerHTML = `<option value="">— 不绑零件 —</option>` +
-                cachedParts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+                cachedParts.map(p => `<option value="${p.id}">${App.escapeHtml(p.name || p.code)}</option>`).join("");
             const tsel = document.getElementById("bindPt");
             tsel.innerHTML = `<option value="">— 自动 / 不指定 —</option>` +
-                cachedPts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+                cachedPts.map(p => `<option value="${p.id}">${App.escapeHtml(p.name || p.code)}</option>`).join("");
             document.getElementById("bindError").textContent = "";
             App.showModal("bindModal");
         }
@@ -235,8 +235,8 @@
                 grid.innerHTML = `<p class="muted">还没有库位</p>`;
                 return;
             }
-            const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
-            const ptMap = new Map(cachedPts.map(p => [p.id, p.code]));
+            const partMap = new Map(cachedParts.map(p => [p.id, p.name || p.code]));
+            const ptMap = new Map(cachedPts.map(p => [p.id, p.name || p.code]));
             grid.innerHTML = items.map(({ ws, inv }) => {
                 let statusObj, partLabel = "";
                 if (!ws.is_active) {

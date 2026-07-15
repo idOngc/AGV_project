@@ -120,21 +120,21 @@ class SeerAPI(AGVConnector):
     async def get_info(self) -> dict[str, Any]:
         return (await self._request(StateMsg.INFO_REQ)).body
 
-    async def get_battery(self, simple: bool = True) -> dict[str, Any]:
+    async def get_battery(self, simple: bool = True, *, timeout: float = DEFAULT_REQ_TIMEOUT) -> dict[str, Any]:
         body = {"simple": simple} if simple else None
-        return (await self._request(StateMsg.BATTERY_REQ, body=body)).body
+        return (await self._request(StateMsg.BATTERY_REQ, body=body, timeout=timeout)).body
 
-    async def get_location(self) -> dict[str, Any]:
-        return (await self._request(StateMsg.LOC_REQ)).body
+    async def get_location(self, *, timeout: float = DEFAULT_REQ_TIMEOUT) -> dict[str, Any]:
+        return (await self._request(StateMsg.LOC_REQ, timeout=timeout)).body
 
-    async def get_speed(self) -> dict[str, Any]:
-        return (await self._request(StateMsg.SPEED_REQ)).body
+    async def get_speed(self, *, timeout: float = DEFAULT_REQ_TIMEOUT) -> dict[str, Any]:
+        return (await self._request(StateMsg.SPEED_REQ, timeout=timeout)).body
 
-    async def get_run_state(self) -> dict[str, Any]:
-        return (await self._request(StateMsg.RUN_REQ)).body
+    async def get_run_state(self, *, timeout: float = DEFAULT_REQ_TIMEOUT) -> dict[str, Any]:
+        return (await self._request(StateMsg.RUN_REQ, timeout=timeout)).body
 
-    async def get_task_state(self) -> dict[str, Any]:
-        return (await self._request(StateMsg.TASK_REQ)).body
+    async def get_task_state(self, *, timeout: float = DEFAULT_REQ_TIMEOUT) -> dict[str, Any]:
+        return (await self._request(StateMsg.TASK_REQ, timeout=timeout)).body
 
     async def get_all_in_one(self) -> dict[str, Any]:
         """1100 ALL1_REQ —— 一次拉所有状态(位姿/电量/jack/IO 等)。"""

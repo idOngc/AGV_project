@@ -189,7 +189,7 @@
                     api("GET", "/api/v1/ws"),
                     api("GET", "/api/v1/pallet-types"),
                 ]);
-                const ptMap = new Map(cachedPts.map(p => [p.id, p.code]));
+                const ptMap = new Map(cachedPts.map(p => [p.id, p.name || p.code]));
                 if (cachedWs.length === 0) {
                     tbody.innerHTML = `<tr><td colspan="10" class="muted">还没有库位</td></tr>`;
                     return;
@@ -253,7 +253,7 @@
         async function fillPtSelect() {
             if (cachedPts.length === 0) cachedPts = await api("GET", "/api/v1/pallet-types");
             document.getElementById("wsPalletTypes").innerHTML = cachedPts.map(p =>
-                `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`
+                `<option value="${p.id}">${App.escapeHtml(p.name || p.code)}</option>`
             ).join("");
         }
 

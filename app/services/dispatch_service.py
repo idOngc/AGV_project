@@ -257,14 +257,13 @@ async def _resolve_context(
     入参契约:
       - SEND_EMPTY_TO_WS    : pallet_type_uuid 必填,必须 ∈ CP 的空托盘绑定
                               -> 自动找 EMPTY_SLOT + allow_empty_pallet + WS 绑定该 pallet
-      - SEND_MATERIAL_TO_WS : pallet_type_uuid 必填,必须 ∈ CP 的空托盘绑定
-                              -> 自动找 EMPTY_SLOT + WS 绑定该 pallet (此场景默认要 allow_empty_pallet 之外
-                                 也允许 allow_full_material,先按"能放空托"统一过滤,等"先送料"业务铺开再细分)
+      - SEND_MATERIAL_TO_WS : part_uuid 必填 (=要送出的零件号)
+                              -> 用 part_pallet_mapping 查该零件可用的托盘类型,
+                                 与 CP 绑定的托盘求交集,选一个,自动找 EMPTY_SLOT + WS 绑定该 pallet
       - FETCH_MATERIAL_TO_CP: part_uuid 必填
                               -> 自动找 FULL_MATERIAL + part 匹配的库位
-      - FETCH_EMPTY_TO_CP   : part_uuid 必填 (=要入库的零件号)
-                              -> 用 part_pallet_mapping 查零件可用的 pallet_type,自动找
-                                 EMPTY_PALLET 且 pallet_type 匹配的库位
+      - FETCH_EMPTY_TO_CP   : pallet_type_uuid 必填,必须 ∈ CP 的空托盘绑定
+                              -> 自动找该托盘类型的 EMPTY_PALLET 库位
     """
     part: Part | None = None
     pallet_type: PalletType | None = None
@@ -298,22 +297,49 @@ async def _resolve_context(
         inventory = inv
 
     elif business_type == BusinessType.SEND_MATERIAL_TO_WS:
-        if not pallet_type:
-            raise MissingContext("SEND_MATERIAL_TO_WS 必须指定 pallet_type_uuid")
-        if not await _cp_supports_pallet(call_point, pallet_type.id):
+        # "按零件号送料" —— 前端选零件,后端反查 part_pallet_mapping 匹配托盘类型,
+        # 与 CP 已绑定的托盘求交集,再找能接收该托盘的空库位。
+        if not part:
+            raise MissingContext("SEND_MATERIAL_TO_WS 必须指定 part_uuid (=要送的零件号)")
+        mapping_pt_ids = list(
+            await PartPalletMapping.filter(
+                part_id=part.id, is_active=True
+            ).values_list("pallet_type_id", flat=True)
+        )
+        if not mapping_pt_ids:
             raise MissingContext(
-                f"呼叫点 {call_point.code} 未绑定托盘类型 {pallet_type.code}"
+                f"零件 {part.code} 未在 part_pallet_mapping 配置任何可用托盘类型"
             )
-        inv = await inventory_service.find_empty_slot_for_pallet(pallet_type.id)
-        if not inv:
+        cp_pt_ids = set(
+            await CallPointPalletTypeBinding.filter(
+                call_point_id=call_point.id
+            ).values_list("pallet_type_id", flat=True)
+        )
+        cand_pt_ids = [pt_id for pt_id in mapping_pt_ids if pt_id in cp_pt_ids]
+        if not cand_pt_ids:
             raise MissingContext(
-                f"找不到能接收托盘 {pallet_type.code} 的空闲库位"
+                f"零件 {part.code} 的候选托盘类型({mapping_pt_ids})与呼叫点 "
+                f"{call_point.code} 已绑定的托盘类型({sorted(cp_pt_ids)})无交集,"
+                "请先在 CP↔托盘 或 零件↔托盘 绑定表里补齐配置"
+            )
+        # 遍历候选托盘,找到一个有空槽的即用
+        chosen_pt: PalletType | None = None
+        inv = None
+        for pt_id in cand_pt_ids:
+            got = await inventory_service.find_empty_slot_for_pallet(pt_id)
+            if got:
+                inv = got
+                chosen_pt = await PalletType.get(id=pt_id)
+                break
+        if not inv or not chosen_pt:
+            raise MissingContext(
+                f"找不到能接收零件 {part.code} 对应托盘"
+                f"(候选 pallet_type_id={cand_pt_ids})的空闲库位 "
                 "(检查:WS 绑定该托盘类型 + EMPTY_SLOT + 未锁 + 启用)"
             )
         to_ws = inv.ws
         inventory = inv
-        # SEND_MATERIAL 暂不要求前端传 part —— 真实零件信息会在 PLC/扫码业务接入后补,
-        # 此时 task.part 为 None, inventory 完成后仍能转 FULL_MATERIAL (但 part_id 留空)
+        pallet_type = chosen_pt
 
     elif business_type == BusinessType.FETCH_MATERIAL_TO_CP:
         if not part:
@@ -326,24 +352,21 @@ async def _resolve_context(
         pallet_type = inv.pallet_type  # 用库存现状作为搬运 pallet
 
     elif business_type == BusinessType.FETCH_EMPTY_TO_CP:
-        # "按零件号取空托" —— 先查这个零件能用什么托盘
-        if not part:
-            raise MissingContext("FETCH_EMPTY_TO_CP 必须指定 part_uuid (=要入库的零件号)")
-        mapping_pts = await PartPalletMapping.filter(
-            part_id=part.id, is_active=True
-        ).values_list("pallet_type_id", flat=True)
-        if not mapping_pts:
+        # "取空托到 CP" —— 前端直接选托盘类型,后端找该托盘的 EMPTY_PALLET 库位。
+        if not pallet_type:
+            raise MissingContext("FETCH_EMPTY_TO_CP 必须指定 pallet_type_uuid")
+        if not await _cp_supports_pallet(call_point, pallet_type.id):
             raise MissingContext(
-                f"零件 {part.code} 未在 part_pallet_mapping 配置任何可用托盘类型"
+                f"呼叫点 {call_point.code} 未绑定空托盘类型 {pallet_type.code}"
             )
-        inv = await inventory_service.find_empty_pallet_for_part(part.id)
+        inv = await inventory_service.find_ws_with_empty_pallet(pallet_type.id)
         if not inv:
             raise MissingContext(
-                f"找不到零件 {part.code} 可用的空托库位 (检查:对应托盘类型的 EMPTY_PALLET 库存)"
+                f"找不到含空托盘 {pallet_type.code} 的可用库位 "
+                "(检查:EMPTY_PALLET + 未锁 + 库位启用 + pallet_type 匹配)"
             )
         from_ws = inv.ws
         inventory = inv
-        pallet_type = inv.pallet_type
 
     return {
         "call_point": call_point,

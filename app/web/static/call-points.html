@@ -120,13 +120,17 @@
             <p class="muted" id="dpHint" style="font-size:12px;margin:6px 0 0;"></p>
 
             <div class="dispatch-fields">
-                <!-- 零件 - FETCH 类必填 -->
+                <!-- 零件 - 业务 2/4 必填 -->
                 <label id="dpPartLabel" style="display:none;">
                     <span>零件 *</span>
                     <select id="dpPart"></select>
                 </label>
 
-                <!-- (空)托盘类型 - SEND 类必填, 仅显示 CP 已绑定的范围 -->
+                <!-- 匹配的托盘类型 (业务4 只读展示,后端按 part→pallet 映射自动选) -->
+                <p id="dpPartPalletMatch"
+                   style="display:none;font-size:12px;margin:2px 0 6px;padding:6px 8px;background:#f4f6fb;border-radius:4px;"></p>
+
+                <!-- 托盘类型 - 业务 1/3 必填, 仅显示 CP 已绑定的范围 -->
                 <label id="dpPalletLabel" style="display:none;">
                     <span>托盘类型 *</span>
                     <select id="dpPallet"></select>
@@ -214,6 +218,7 @@
         let cachedAgvs = [];
         let cachedPallets = null;   // CP 编辑弹窗 + 调度弹窗 共用
         let cachedParts = null;     // 调度弹窗用
+        let cachedMappings = null;  // 零件↔托盘 映射 (业务4 展示匹配托盘用)
         let cachedWs = null;        // 调度弹窗(放空托) 校验时用,目前不直接渲染
         let editingCpUuid = null;
         let currentCpUuid = null;
@@ -236,7 +241,7 @@
             const sel = document.getElementById("cpPalletTypes");
             const items = cachedPallets || [];
             sel.innerHTML = items.map(p =>
-                `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`
+                `<option value="${p.id}">${App.escapeHtml(p.name || p.code)}</option>`
             ).join("");
             Array.from(sel.options).forEach(o => {
                 o.selected = selectedIds.includes(parseInt(o.value, 10));
@@ -372,6 +377,7 @@
             const tasks = [];
             if (cachedParts === null)  tasks.push(api("GET", "/api/v1/parts").then(d => cachedParts = d));
             if (cachedPallets === null) tasks.push(api("GET", "/api/v1/pallet-types").then(d => cachedPallets = d));
+            if (cachedMappings === null) tasks.push(api("GET", "/api/v1/parts/mappings/list").then(d => cachedMappings = d));
             if (cachedAgvs.length === 0) tasks.push(api("GET", "/api/v1/agvs").then(d => cachedAgvs = d));
             await Promise.all(tasks);
         }
@@ -393,17 +399,20 @@
         }
 
         // 业务类型 → 该业务需要的字段 (part / pallet) 与提示文案。
-        // SEND 类用 pallet (仅限 CP 已绑定的空托盘列表)
-        // FETCH 类用 part
+        //   1 送空托到WS: 选托盘类型
+        //   2 送料到CP:   选零件
+        //   3 送空托到CP: 选托盘类型
+        //   4 送料到WS:   选零件(后端按 零件→托盘 映射自动匹配)
         const BIZ_RULES = {
             1: { need: "pallet", hint: "前端只选要送的空托盘类型,后端自动找 EMPTY_SLOT + 已绑定该托盘的库位。" },
             2: { need: "part",   hint: "前端只选零件号,后端自动找 FULL_MATERIAL + 该零件的库位。" },
-            3: { need: "part",   hint: "前端选要入库的零件号,后端按零件→托盘映射找 EMPTY_PALLET 库位。" },
-            4: { need: "pallet", hint: "前端选送料用的托盘类型(必须 ∈ CP 绑定),后端自动找空库位。" },
+            3: { need: "pallet", hint: "前端选要取的空托盘类型(必须 ∈ CP 绑定),后端自动找有该空托的库位。" },
+            4: { need: "part",   hint: "前端选零件,后端按 零件→托盘 映射自动匹配托盘类型 & 找空库位。" },
         };
 
         function applyBusinessFields(bt) {
-            const rule = BIZ_RULES[App.toIntKey(bt)] || { need: null, hint: "" };
+            const btKey = App.toIntKey(bt);
+            const rule = BIZ_RULES[btKey] || { need: null, hint: "" };
             document.getElementById("dpHint").textContent = rule.hint;
 
             const partL    = document.getElementById("dpPartLabel");
@@ -415,6 +424,53 @@
             palletL.style.display = rule.need === "pallet" ? "" : "none";
             partI.required        = rule.need === "part";
             palletI.required      = rule.need === "pallet";
+
+            // 业务4 (SEND_MATERIAL_TO_WS):选零件后展示"自动匹配的托盘类型"
+            const matchBox = document.getElementById("dpPartPalletMatch");
+            if (btKey === 4 && rule.need === "part") {
+                matchBox.style.display = "";
+                refreshPartPalletMatch();
+            } else {
+                matchBox.style.display = "none";
+            }
+        }
+
+        function refreshPartPalletMatch() {
+            const partId = getSelectedPartId();
+            const box = document.getElementById("dpPartPalletMatch");
+            if (!partId || !cachedMappings || !cachedPallets) {
+                box.textContent = "(选中零件后展示匹配的托盘类型)";
+                return;
+            }
+            const cp = cachedCps.find(x => x.uuid === document.getElementById("dispatchForm").dataset.cpUuid);
+            const cpBoundIds = new Set(cp && cp.pallet_type_ids ? cp.pallet_type_ids : []);
+            const partPtIds = cachedMappings
+                .filter(m => m.part_id === partId && m.is_active !== false)
+                .map(m => m.pallet_type_id);
+            if (partPtIds.length === 0) {
+                box.innerHTML = `<span class="error">该零件未在 零件↔托盘 绑定表配置任何托盘类型</span>`;
+                return;
+            }
+            const inter = partPtIds.filter(id => cpBoundIds.has(id));
+            const nameOf = id => {
+                const p = (cachedPallets || []).find(x => x.id === id);
+                return p ? (p.name || p.code) : `#${id}`;
+            };
+            const allNames = partPtIds.map(nameOf).join("、");
+            if (inter.length === 0) {
+                box.innerHTML = `<span class="error">零件绑定托盘(${allNames})与本 CP 已绑定托盘无交集,无法下发</span>`;
+                return;
+            }
+            const interNames = inter.map(nameOf).join("、");
+            box.innerHTML = `匹配的托盘类型:<b>${App.escapeHtml(interNames)}</b>` +
+                (inter.length < partPtIds.length ? `<span class="muted"> (零件全部候选:${App.escapeHtml(allNames)})</span>` : "");
+        }
+
+        function getSelectedPartId() {
+            const uuid = document.getElementById("dpPart").value;
+            if (!uuid || !cachedParts) return null;
+            const p = cachedParts.find(x => x.uuid === uuid);
+            return p ? p.id : null;
         }
 
         async function openDispatch(uuid, code) {
@@ -448,17 +504,17 @@
             fillSelect(
                 document.getElementById("dpPart"),
                 cachedParts || [], "uuid",
-                p => `${p.name || p.code} (${p.code})`,
+                p => p.name || p.code,
                 { value: "", label: "请选择零件..." },
             );
 
-            // 托盘下拉 = 仅 CP 已绑定的空托盘类型
+            // 托盘下拉 = 仅 CP 已绑定的空托盘类型 (展示 name 优先, 后端字段用 uuid)
             const allowedPalletIds = new Set(cp.pallet_type_ids || []);
             const cpPallets = (cachedPallets || []).filter(p => allowedPalletIds.has(p.id));
             fillSelect(
                 document.getElementById("dpPallet"),
                 cpPallets, "uuid",
-                p => `${p.name || p.code} (${p.code})`,
+                p => p.name || p.code,
                 { value: "", label: cpPallets.length ? "请选择托盘类型..." : "(该 CP 未绑定任何空托盘类型)" },
             );
 
@@ -477,6 +533,11 @@
 
         document.getElementById("dpBusiness").addEventListener("change", e => {
             applyBusinessFields(e.target.value);
+        });
+
+        document.getElementById("dpPart").addEventListener("change", () => {
+            const bt = App.toIntKey(document.getElementById("dpBusiness").value);
+            if (bt === 4) refreshPartPalletMatch();
         });
 
         document.getElementById("dispatchForm").addEventListener("submit", async e => {

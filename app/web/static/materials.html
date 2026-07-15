@@ -78,9 +78,9 @@
                     <tr>
                         <th>#ID</th>
                         <th>零件 ID</th>
-                        <th>零件 code</th>
+                        <th>零件</th>
                         <th>托盘类型 ID</th>
-                        <th>托盘类型 code</th>
+                        <th>托盘类型</th>
                         <th>启用</th>
                         <th>操作</th>
                     </tr>
@@ -379,8 +379,8 @@
                 // 先确保有最新 part/pt 缓存
                 if (cachedParts.length === 0) cachedParts = await api("GET", "/api/v1/parts");
                 if (cachedPts.length === 0)   cachedPts   = await api("GET", "/api/v1/pallet-types");
-                const partMap = new Map(cachedParts.map(p => [p.id, p.code]));
-                const ptMap   = new Map(cachedPts.map(p => [p.id, p.code]));
+                const partMap = new Map(cachedParts.map(p => [p.id, p.name || p.code]));
+                const ptMap   = new Map(cachedPts.map(p => [p.id, p.name || p.code]));
 
                 const items = await api("GET", "/api/v1/parts/mappings/list");
                 if (items.length === 0) {
@@ -419,8 +419,8 @@
             cachedPts   = await api("GET", "/api/v1/pallet-types");
             const psel = document.getElementById("mapPart");
             const tsel = document.getElementById("mapPt");
-            psel.innerHTML = cachedParts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
-            tsel.innerHTML = cachedPts.map(p => `<option value="${p.id}">${App.escapeHtml(p.code)}${p.name ? " · " + App.escapeHtml(p.name) : ""}</option>`).join("");
+            psel.innerHTML = cachedParts.map(p => `<option value="${p.id}">${App.escapeHtml(p.name || p.code)}</option>`).join("");
+            tsel.innerHTML = cachedPts.map(p => `<option value="${p.id}">${App.escapeHtml(p.name || p.code)}</option>`).join("");
             document.getElementById("mapError").textContent = "";
             App.showModal("mapModal");
         };

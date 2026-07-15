@@ -30,6 +30,12 @@ from app.models.task import Task, TaskStatus
 log = logging.getLogger(__name__)
 
 
+# 心跳超时/抖动参数(集中在这里方便调优)
+_FETCH_ITEM_TIMEOUT_S = 2.0   # 单项 SEER 查询超时(1002/1007/1020)
+_FETCH_AGV_TIMEOUT_S = 4.0    # 单台 AGV 整轮 fetch wall-time,避免拖垮心跳周期
+_OFFLINE_CONFIRM_POLLS = 3    # 连续 N 次心跳都失败才判 OFFLINE(防瞬时抖动)
+
+
 class AGVStatusPoller:
     """简易心跳轮询器,模式与 TaskPoller 一致。"""
 
@@ -37,6 +43,8 @@ class AGVStatusPoller:
         self.interval = interval
         self._task: asyncio.Task | None = None
         self._stopping = asyncio.Event()
+        # AGV uuid → 连续心跳失败次数;成功一次立即清零
+        self._fail_count: dict[str, int] = {}
 
     async def start(self) -> None:
         if self._task is not None and not self._task.done():
@@ -79,11 +87,11 @@ class AGVStatusPoller:
         async def _fetch(agv: AGV) -> tuple[AGV, dict[str, Any] | None]:
             try:
                 api = await seer_manager.get(agv)
-                # 并发拉 3 项:电量 / 运行 / 任务
+                # 并发拉 3 项:电量 / 运行 / 任务,每项 2s 超时,避免默认 5s 拖垮 5s 心跳周期
                 battery, run_state, task_state = await asyncio.gather(
-                    api.get_battery(simple=True), 
-                    api.get_run_state(),
-                    api.get_task_state(),
+                    api.get_battery(simple=True, timeout=_FETCH_ITEM_TIMEOUT_S),
+                    api.get_run_state(timeout=_FETCH_ITEM_TIMEOUT_S),
+                    api.get_task_state(timeout=_FETCH_ITEM_TIMEOUT_S),
                     return_exceptions=True,
                 )
                 return agv, {
@@ -97,7 +105,14 @@ class AGVStatusPoller:
                 log.warning("agv heartbeat for %s unexpected: %r", agv.uuid, e)
                 return agv, None
 
-        results = await asyncio.gather(*(_fetch(a) for a in agvs))
+        async def _fetch_bounded(agv: AGV) -> tuple[AGV, dict[str, Any] | None]:
+            """给单台 AGV 的整轮 fetch 加 wall-time,离线车不会拖垮整轮心跳。"""
+            try:
+                return await asyncio.wait_for(_fetch(agv), timeout=_FETCH_AGV_TIMEOUT_S)
+            except asyncio.TimeoutError:
+                return agv, None
+
+        results = await asyncio.gather(*(_fetch_bounded(a) for a in agvs))
 
         for agv, snap in results:
             await self._apply(agv, snap)
@@ -106,9 +121,21 @@ class AGVStatusPoller:
         # 用本地时间,与 dispatch_service / task_poller 保持一致(use_tz=False)
         now = datetime.now()
 
-        # snap 完全失败 / 所有 3 项都失败(gather 异常 None) → OFFLINE
+        # snap 完全失败 / 所有 3 项都失败(gather 异常 None) → 暂算一次失败,累计到阈值才 OFFLINE
         all_failed = snap is None or all(snap.get(k) is None for k in ("battery", "run_state", "task_state"))
         if all_failed:
+            self._fail_count[agv.uuid] = self._fail_count.get(agv.uuid, 0) + 1
+            if self._fail_count[agv.uuid] < _OFFLINE_CONFIRM_POLLS:
+                # 未达 OFFLINE 判定阈值,只刷新心跳时间,不改 run_state / battery,前端保留旧状态
+                agv.last_status_at = now
+                await agv.save(update_fields=["last_status_at", "updated_at"])
+                log.debug(
+                    "agv %s 心跳失败 %d/%d,暂不置 OFFLINE",
+                    agv.uuid, self._fail_count[agv.uuid], _OFFLINE_CONFIRM_POLLS,
+                )
+                return
+
+            # 已达阈值 → 判定 OFFLINE
             agv.run_state = AGVRunState.OFFLINE
             agv.current_task_uuid = None
             # 离线时清掉电量,避免前端显示"离线 100%"的错觉
@@ -124,6 +151,9 @@ class AGVStatusPoller:
                 ]
             )
             return
+
+        # 一次成功即清零,后续任意失败都要重新累计
+        self._fail_count.pop(agv.uuid, None)
 
         # 电量
         battery = snap.get("battery") or {}
@@ -177,7 +207,7 @@ class AGVStatusPoller:
             and agv.battery_level < agv.low_battery_threshold
         ):
             new_run_state = AGVRunState.LOW_BATTERY
-        
+
         agv.run_state = new_run_state
         agv.last_status_at = now
         await agv.save(

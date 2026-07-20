@@ -68,6 +68,12 @@ class AGVOut(BaseModel):
     current_task_uuid: str | None = None
     last_status_at: datetime | None = None
 
+    # 位姿(供地图模块)
+    x: float | None = None
+    y: float | None = None
+    angle: float | None = None
+    current_station: str | None = None
+
     created_at: datetime
     updated_at: datetime
 
@@ -96,6 +102,10 @@ class AGVOut(BaseModel):
             low_battery_threshold=agv.low_battery_threshold,
             current_task_uuid=agv.current_task_uuid,
             last_status_at=agv.last_status_at,
+            x=agv.x,
+            y=agv.y,
+            angle=agv.angle,
+            current_station=agv.current_station,
             created_at=agv.created_at,
             updated_at=agv.updated_at,
         )

@@ -7,6 +7,7 @@
 (function (global) {
     const PAGES = [
         { href: "dashboard.html",   label: "AGV 控制台" },
+        { href: "map.html",         label: "实时地图" },
         { href: "materials.html",   label: "物料管理" },
         { href: "ws.html",          label: "库位管理" },
         { href: "call-points.html", label: "呼叫点管理" },

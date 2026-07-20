@@ -9,6 +9,7 @@ from app.api.v1.endpoints import (
     auth,
     call_point,
     inventory,
+    map as map_ep,
     pallet_type,
     part,
     task,
@@ -32,3 +33,6 @@ api_router.include_router(call_point.router, prefix="/call-points", tags=["facil
 
 # 库存
 api_router.include_router(inventory.router, prefix="/inventory", tags=["inventory"])
+
+# 地图
+api_router.include_router(map_ep.router, prefix="/maps", tags=["map"])

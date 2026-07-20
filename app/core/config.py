@@ -44,6 +44,9 @@ class Settings(BaseSettings):
     SEER_DEFAULT_TIMEOUT: float = 5.0
     SEER_RECONNECT_INTERVAL: float = 3.0
 
+    # 数据存储根目录(相对项目根 or 绝对);当前仅地图模块用
+    data_dir: str = "data"
+
     @property
     def mysql_url(self) -> str:
         """Tortoise-ORM 使用的 DSN 格式。"""

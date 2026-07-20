@@ -87,17 +87,20 @@ class AGVStatusPoller:
         async def _fetch(agv: AGV) -> tuple[AGV, dict[str, Any] | None]:
             try:
                 api = await seer_manager.get(agv)
-                # 并发拉 3 项:电量 / 运行 / 任务,每项 2s 超时,避免默认 5s 拖垮 5s 心跳周期
-                battery, run_state, task_state = await asyncio.gather(
+                # 并发拉 4 项:电量 / 运行 / 任务 / 位姿,每项 2s 超时,
+                # 避免默认 5s 拖垮 5s 心跳周期。location 供地图模块实时渲染。
+                battery, run_state, task_state, location = await asyncio.gather(
                     api.get_battery(simple=True, timeout=_FETCH_ITEM_TIMEOUT_S),
                     api.get_run_state(timeout=_FETCH_ITEM_TIMEOUT_S),
                     api.get_task_state(timeout=_FETCH_ITEM_TIMEOUT_S),
+                    api.get_location(timeout=_FETCH_ITEM_TIMEOUT_S),
                     return_exceptions=True,
                 )
                 return agv, {
                     "battery": battery if not isinstance(battery, Exception) else None,
                     "run_state": run_state if not isinstance(run_state, Exception) else None,
                     "task_state": task_state if not isinstance(task_state, Exception) else None,
+                    "location": location if not isinstance(location, Exception) else None,
                 }
             except SeerClientError:
                 return agv, None
@@ -121,8 +124,10 @@ class AGVStatusPoller:
         # 用本地时间,与 dispatch_service / task_poller 保持一致(use_tz=False)
         now = datetime.now()
 
-        # snap 完全失败 / 所有 3 项都失败(gather 异常 None) → 暂算一次失败,累计到阈值才 OFFLINE
-        all_failed = snap is None or all(snap.get(k) is None for k in ("battery", "run_state", "task_state"))
+        # snap 完全失败 / 所有 4 项都失败 → 暂算一次失败,累计到阈值才 OFFLINE
+        all_failed = snap is None or all(
+            snap.get(k) is None for k in ("battery", "run_state", "task_state", "location")
+        )
         if all_failed:
             self._fail_count[agv.uuid] = self._fail_count.get(agv.uuid, 0) + 1
             if self._fail_count[agv.uuid] < _OFFLINE_CONFIRM_POLLS:
@@ -138,14 +143,20 @@ class AGVStatusPoller:
             # 已达阈值 → 判定 OFFLINE
             agv.run_state = AGVRunState.OFFLINE
             agv.current_task_uuid = None
-            # 离线时清掉电量,避免前端显示"离线 100%"的错觉
+            # 离线时清掉电量/位姿,避免前端展示旧数据
             agv.battery_level = None
+            agv.x = None
+            agv.y = None
+            agv.angle = None
             agv.last_status_at = now
             await agv.save(
                 update_fields=[
                     "run_state",
                     "current_task_uuid",
                     "battery_level",
+                    "x",
+                    "y",
+                    "angle",
                     "last_status_at",
                     "updated_at",
                 ]
@@ -154,6 +165,30 @@ class AGVStatusPoller:
 
         # 一次成功即清零,后续任意失败都要重新累计
         self._fail_count.pop(agv.uuid, None)
+
+        # 位姿(1004 LOC_REQ) → 存 x/y/angle/current_station
+        loc = snap.get("location") or {}
+        loc_x = loc.get("x")
+        loc_y = loc.get("y")
+        loc_angle = loc.get("angle")
+        loc_station = loc.get("current_station") or loc.get("currentStation")
+        if loc_x is not None:
+            try:
+                agv.x = float(loc_x)
+            except (TypeError, ValueError):
+                pass
+        if loc_y is not None:
+            try:
+                agv.y = float(loc_y)
+            except (TypeError, ValueError):
+                pass
+        if loc_angle is not None:
+            try:
+                agv.angle = float(loc_angle)
+            except (TypeError, ValueError):
+                pass
+        if loc_station is not None:
+            agv.current_station = str(loc_station)[:64]
 
         # 电量
         battery = snap.get("battery") or {}
@@ -216,6 +251,10 @@ class AGVStatusPoller:
                 "battery_level",
                 "current_task_uuid",
                 "last_status_at",
+                "x",
+                "y",
+                "angle",
+                "current_station",
                 "updated_at",
             ]
         )

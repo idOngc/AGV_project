@@ -77,6 +77,14 @@ class AGV(Model):
         description="最近一次状态拉取时间;调度判活兜底",
     )
 
+    # 位姿(由心跳 worker 从仙工 1004 LOC_REQ 拉取,供地图模块实时渲染)
+    x = fields.FloatField(null=True, description="世界坐标 x (米)")
+    y = fields.FloatField(null=True, description="世界坐标 y (米)")
+    angle = fields.FloatField(null=True, description="朝向角 (弧度)")
+    current_station = fields.CharField(
+        max_length=64, null=True, description="当前所在站点 (e.g. LM7 / AP70),仙工上报"
+    )
+
     created_at = fields.DatetimeField(auto_now_add=True)
     updated_at = fields.DatetimeField(auto_now=True)
 

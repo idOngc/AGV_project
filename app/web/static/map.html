@@ -1,0 +1,574 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AGV 调度系统 - 实时地图</title>
+    <link rel="stylesheet" href="style.css">
+    <style>
+        /* 页面独占布局:顶栏 → 图例 → 工具栏 → (地图 + 右侧栏) 三段 */
+        body { margin: 0; }
+        .map-legend {
+            display: flex; gap: 6px; flex-wrap: wrap;
+            padding: 6px 12px; background: #fafbfc;
+            border-bottom: 1px solid #e5e7eb; font-size: 12px;
+        }
+        .map-legend .item {
+            display: inline-flex; align-items: center; gap: 4px;
+            padding: 2px 8px; border-radius: 4px;
+            color: #fff; font-weight: 500;
+        }
+        .map-toolbar {
+            display: flex; gap: 8px; align-items: center;
+            padding: 8px 12px; background: #fff;
+            border-bottom: 1px solid #e5e7eb;
+        }
+        .map-toolbar select, .map-toolbar input, .map-toolbar button { font-size: 13px; }
+        .map-toolbar .stat { color: #6b7280; font-size: 12px; }
+        .map-toolbar .grow { flex: 1; }
+        .map-body {
+            display: grid; grid-template-columns: 1fr 300px;
+            height: calc(100vh - 60px - 34px - 46px);
+            /* 100vh - topbar - legend - toolbar */
+        }
+        .map-canvas-wrap {
+            position: relative; overflow: hidden; background: #fff;
+            border-right: 1px solid #e5e7eb;
+        }
+        canvas#mapCanvas { display: block; cursor: grab; }
+        canvas#mapCanvas.dragging { cursor: grabbing; }
+        .map-tooltip {
+            position: absolute; padding: 4px 8px;
+            background: rgba(15,23,42,0.9); color: #fff;
+            font-size: 12px; border-radius: 4px;
+            pointer-events: none; z-index: 5;
+            transform: translate(10px, 10px);
+        }
+        .map-sidebar {
+            padding: 12px; background: #fafbfc; overflow-y: auto;
+        }
+        .map-sidebar h3 { margin: 0 0 8px; font-size: 14px; }
+        .map-sidebar .kv {
+            display: grid; grid-template-columns: 80px 1fr;
+            row-gap: 6px; column-gap: 8px; font-size: 13px;
+        }
+        .map-sidebar .kv .k { color: #6b7280; }
+        .map-sidebar .kv .v { color: #111827; word-break: break-all; }
+        .map-sidebar .state-badge {
+            display: inline-block; padding: 2px 8px;
+            border-radius: 4px; color: #fff; font-size: 12px; font-weight: 500;
+        }
+        .empty { color: #9ca3af; text-align: center; padding: 24px 0; font-size: 13px; }
+        .zoom-ctrl {
+            position: absolute; bottom: 12px; right: 12px;
+            display: flex; flex-direction: column; gap: 4px; z-index: 3;
+        }
+        .zoom-ctrl button {
+            width: 32px; height: 32px; padding: 0;
+            background: #fff; border: 1px solid #d1d5db; border-radius: 4px;
+            cursor: pointer; font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <!-- 顶栏 -->
+    <header class="topbar">
+        <h1>实时地图</h1>
+        <div></div>
+    </header>
+
+    <!-- AGV 状态色块图例 -->
+    <div class="map-legend" id="legendBox"></div>
+
+    <!-- 地图工具栏 -->
+    <div class="map-toolbar">
+        <label>地图:
+            <select id="mapSelect" style="min-width: 220px;"></select>
+        </label>
+        <button class="secondary" id="btnActivate">激活</button>
+        <button id="btnUpload">上传 .smap</button>
+        <button class="danger" id="btnDelete">删除</button>
+        <input type="file" id="fileInput" accept=".smap" style="display:none;">
+        <span class="grow"></span>
+        <span class="stat" id="mapStat"></span>
+        <button class="secondary" id="btnReset" title="回到自适应视图">重置视图</button>
+    </div>
+
+    <!-- 中间:Canvas + 右侧详情 -->
+    <div class="map-body">
+        <div class="map-canvas-wrap">
+            <canvas id="mapCanvas"></canvas>
+            <div id="mapTooltip" class="map-tooltip" style="display:none;"></div>
+            <div class="zoom-ctrl">
+                <button id="btnZoomIn">+</button>
+                <button id="btnZoomOut">−</button>
+            </div>
+        </div>
+
+        <aside class="map-sidebar" id="sidebar">
+            <div class="empty">点击 AGV 查看详情</div>
+        </aside>
+    </div>
+
+    <script src="app.js"></script>
+    <script>
+        const api = App.api;
+
+        /* ============================================================
+           AGV 状态色块 —— 8+ 种,状态推导见 pickAgvState()
+           ============================================================ */
+        const AGV_STATES = [
+            { key: "offline",  label: "下线",       color: "#6b7280" },
+            { key: "emergency",label: "急停",       color: "#dc2626" },
+            { key: "loading",  label: "载货中",     color: "#3b82f6" },
+            { key: "low_bat",  label: "缺电",       color: "#f97316" },
+            { key: "blocked",  label: "障碍物",     color: "#f59e0b" },
+            { key: "rescue",   label: "需要救援",   color: "#a855f7" },
+            { key: "paused",   label: "停止运送",   color: "#7c3aed" },
+            { key: "starting", label: "开始任务",   color: "#0ea5e9" },
+            { key: "idle",     label: "平常",       color: "#10b981" },
+        ];
+        const STATE_BY_KEY = Object.fromEntries(AGV_STATES.map(s => [s.key, s]));
+
+        /* 根据 AGV & 关联 task 推导状态 key(与色块 legend 对齐)
+           task.status 是 int 枚举: 0=INIT 1=RUNNING 2=PAUSED 3=COMPLETED 4=FAILED 5=CANCELED */
+        function pickAgvState(agv, task) {
+            const rs = agv.run_state_label || "";
+            if (rs === "OFFLINE") return "offline";
+            if (rs === "ERROR") return "emergency";
+            if (rs === "LOW_BATTERY") return "low_bat";
+            if (rs === "PAUSED") return "paused";
+            if (rs === "RUNNING") {
+                if (task && task.status === 4) return "rescue";       // FAILED 且车还在跑 → 需要救援
+                if (task && task.current_step_no !== undefined && task.current_step_no < 2) return "starting";
+                return "loading";
+            }
+            if (rs === "IDLE") return "idle";
+            return "idle";
+        }
+
+        function renderLegend() {
+            const box = document.getElementById("legendBox");
+            box.innerHTML = AGV_STATES.map(s =>
+                `<span class="item" style="background:${s.color}">${s.label}</span>`
+            ).join("");
+        }
+        renderLegend();
+
+        /* ============================================================
+           视图 (Canvas + pan/zoom)
+           世界(米) → 屏幕(像素):
+             sx = (wx - offset.wx) * scale + offset.sx
+             sy = (offset.wy - wy) * scale + offset.sy   (y 翻转,仙工地图往上是 +y)
+           ============================================================ */
+        const canvas = document.getElementById("mapCanvas");
+        const ctx = canvas.getContext("2d");
+        const tooltip = document.getElementById("mapTooltip");
+        const wrap = canvas.parentElement;
+
+        let dpr = window.devicePixelRatio || 1;
+        function resizeCanvas() {
+            const rect = wrap.getBoundingClientRect();
+            canvas.width  = rect.width  * dpr;
+            canvas.height = rect.height * dpr;
+            canvas.style.width  = rect.width  + "px";
+            canvas.style.height = rect.height + "px";
+            ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+            draw();
+        }
+        window.addEventListener("resize", resizeCanvas);
+
+        /* 当前视图变换:世界原点在屏幕的位置 + scale */
+        let view = { scale: 20, pan_x: 0, pan_y: 0, world_min_x: 0, world_max_y: 0 };
+
+        function fitToBounds(minX, minY, maxX, maxY) {
+            const rect = wrap.getBoundingClientRect();
+            const padding = 40;
+            const worldW = Math.max(0.1, maxX - minX);
+            const worldH = Math.max(0.1, maxY - minY);
+            const sx = (rect.width  - padding*2) / worldW;
+            const sy = (rect.height - padding*2) / worldH;
+            view.scale = Math.min(sx, sy);
+            view.world_min_x = minX;
+            view.world_max_y = maxY;
+            view.pan_x = padding + (rect.width  - padding*2 - worldW * view.scale) / 2;
+            view.pan_y = padding + (rect.height - padding*2 - worldH * view.scale) / 2;
+        }
+
+        function w2s(wx, wy) {
+            return [
+                (wx - view.world_min_x) * view.scale + view.pan_x,
+                (view.world_max_y - wy) * view.scale + view.pan_y,
+            ];
+        }
+        function s2w(sx, sy) {
+            return [
+                (sx - view.pan_x) / view.scale + view.world_min_x,
+                view.world_max_y - (sy - view.pan_y) / view.scale,
+            ];
+        }
+
+        /* ============================================================
+           数据状态
+           ============================================================ */
+        let currentMap = null;
+        let geometry = null;    // {header, points, curves, patrols, stats}
+        let agvs = [];           // AGV list from /api/v1/agvs
+        let tasksByAgv = new Map();  // uuid → running task (最近一条 RUNNING/PAUSED/INIT)
+        let selectedAgvUuid = null;
+        let hoverInfo = null;    // {type,name,x,y,tip}
+
+        /* ============================================================
+           绘制
+           ============================================================ */
+        function draw() {
+            const rect = wrap.getBoundingClientRect();
+            ctx.clearRect(0, 0, rect.width, rect.height);
+            if (!geometry) {
+                ctx.fillStyle = "#9ca3af";
+                ctx.font = "14px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText("请先在上方选择或上传地图", rect.width/2, rect.height/2);
+                return;
+            }
+            drawCurves();
+            drawPoints();
+            drawAgvs();
+        }
+
+        /* 线段:双向粉 / 单向蓝;宽度固定屏幕像素(不随 scale 变) */
+        function drawCurves() {
+            const curves = geometry.curves || [];
+            // 分两轮画,先单向后双向,双向压顶更明显
+            for (const dir of ["uni", "bi"]) {
+                ctx.strokeStyle = dir === "bi" ? "#ff69b4" : "#4fc3f7";
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                for (const c of curves) {
+                    if ((c.is_bidir ? "bi" : "uni") !== dir) continue;
+                    const [sx, sy] = w2s(c.start_x, c.start_y);
+                    const [ex, ey] = w2s(c.end_x,   c.end_y);
+                    ctx.moveTo(sx, sy);
+                    if (c.className === "BezierPath" || c.className === "DegenerateBezier") {
+                        const [c1x, c1y] = w2s(c.c1_x, c.c1_y);
+                        const [c2x, c2y] = w2s(c.c2_x, c.c2_y);
+                        ctx.bezierCurveTo(c1x, c1y, c2x, c2y, ex, ey);
+                    } else {
+                        ctx.lineTo(ex, ey);
+                    }
+                }
+                ctx.stroke();
+            }
+        }
+
+        const STATION_COLORS = {
+            LocationMark: "#4ecdc4",  // 青
+            ActionPoint:  "#ffd93d",  // 黄
+            ChargePoint:  "#ff6b6b",  // 红
+        };
+        function drawPoints() {
+            const pts = geometry.points || [];
+            const r = 3.5;  // 屏幕像素
+            const showLabel = view.scale > 25;  // 放大到一定倍数才画标签
+            ctx.font = "10px sans-serif";
+            ctx.textAlign = "left";
+            for (const p of pts) {
+                const color = STATION_COLORS[p.className] || "#94a3b8";
+                const [sx, sy] = w2s(p.x, p.y);
+                ctx.fillStyle = color;
+                ctx.beginPath();
+                ctx.arc(sx, sy, r, 0, Math.PI * 2);
+                ctx.fill();
+                if (showLabel) {
+                    ctx.fillStyle = "#374151";
+                    ctx.fillText(p.name, sx + r + 2, sy + r);
+                }
+            }
+        }
+
+        function drawAgvs() {
+            for (const a of agvs) {
+                if (a.x == null || a.y == null) continue;
+                const stateKey = pickAgvState(a, tasksByAgv.get(a.uuid));
+                const st = STATE_BY_KEY[stateKey] || STATE_BY_KEY.idle;
+                const [sx, sy] = w2s(a.x, a.y);
+                const R = 12;
+                // 圆盘
+                ctx.beginPath();
+                ctx.arc(sx, sy, R, 0, Math.PI*2);
+                ctx.fillStyle = st.color;
+                ctx.fill();
+                // 白圈
+                ctx.strokeStyle = "#fff";
+                ctx.lineWidth = a.uuid === selectedAgvUuid ? 3 : 2;
+                ctx.stroke();
+                // 朝向箭头(如果有 angle)
+                if (a.angle != null) {
+                    // 仙工的 angle 是"y 轴向上为 +"的坐标系,屏幕 y 翻转,所以 -angle
+                    const theta = -a.angle;
+                    const ax = sx + Math.cos(theta) * (R - 2);
+                    const ay = sy + Math.sin(theta) * (R - 2);
+                    ctx.beginPath();
+                    ctx.moveTo(sx, sy);
+                    ctx.lineTo(ax, ay);
+                    ctx.strokeStyle = "#fff";
+                    ctx.lineWidth = 2;
+                    ctx.stroke();
+                }
+                // AGV 名字
+                ctx.fillStyle = "#111827";
+                ctx.font = "11px sans-serif";
+                ctx.textAlign = "center";
+                ctx.fillText(a.name || a.uuid, sx, sy + R + 12);
+            }
+            ctx.textAlign = "start";
+        }
+
+        /* ============================================================
+           交互:pan/zoom/hover/click
+           ============================================================ */
+        let isDown = false, lastX = 0, lastY = 0;
+        canvas.addEventListener("mousedown", e => {
+            isDown = true; lastX = e.offsetX; lastY = e.offsetY;
+            canvas.classList.add("dragging");
+        });
+        window.addEventListener("mouseup", () => {
+            isDown = false; canvas.classList.remove("dragging");
+        });
+        canvas.addEventListener("mousemove", e => {
+            if (isDown) {
+                view.pan_x += e.offsetX - lastX;
+                view.pan_y += e.offsetY - lastY;
+                lastX = e.offsetX; lastY = e.offsetY;
+                draw();
+                return;
+            }
+            updateHover(e.offsetX, e.offsetY);
+        });
+        canvas.addEventListener("mouseleave", () => hideTooltip());
+        canvas.addEventListener("wheel", e => {
+            e.preventDefault();
+            const zoom = e.deltaY < 0 ? 1.15 : 1/1.15;
+            const [wx, wy] = s2w(e.offsetX, e.offsetY);
+            view.scale *= zoom;
+            // 保持鼠标下的世界点不动
+            const [sx2, sy2] = w2s(wx, wy);
+            view.pan_x += e.offsetX - sx2;
+            view.pan_y += e.offsetY - sy2;
+            draw();
+        }, { passive: false });
+
+        canvas.addEventListener("click", e => {
+            // 命中 AGV 就选中,否则清空侧栏
+            const hit = pickAgvUnderMouse(e.offsetX, e.offsetY);
+            selectedAgvUuid = hit ? hit.uuid : null;
+            renderSidebar();
+            draw();
+        });
+
+        document.getElementById("btnZoomIn").onclick = () => zoomBy(1.2);
+        document.getElementById("btnZoomOut").onclick = () => zoomBy(1/1.2);
+        function zoomBy(k) {
+            const rect = wrap.getBoundingClientRect();
+            const cx = rect.width/2, cy = rect.height/2;
+            const [wx, wy] = s2w(cx, cy);
+            view.scale *= k;
+            const [sx, sy] = w2s(wx, wy);
+            view.pan_x += cx - sx;
+            view.pan_y += cy - sy;
+            draw();
+        }
+        document.getElementById("btnReset").onclick = () => {
+            if (geometry) {
+                const h = geometry.header;
+                fitToBounds(h.minPos.x, h.minPos.y, h.maxPos.x, h.maxPos.y);
+                draw();
+            }
+        };
+
+        function pickAgvUnderMouse(sx, sy) {
+            const R = 14; // 稍大于绘制半径便于点击
+            for (const a of agvs) {
+                if (a.x == null || a.y == null) continue;
+                const [ax, ay] = w2s(a.x, a.y);
+                if (Math.hypot(sx - ax, sy - ay) <= R) return a;
+            }
+            return null;
+        }
+        function pickPointUnderMouse(sx, sy) {
+            if (!geometry) return null;
+            const R = 6;
+            for (const p of geometry.points) {
+                const [px, py] = w2s(p.x, p.y);
+                if (Math.hypot(sx - px, sy - py) <= R) return p;
+            }
+            return null;
+        }
+        function updateHover(sx, sy) {
+            const a = pickAgvUnderMouse(sx, sy);
+            if (a) return showTooltip(sx, sy,
+                `${a.name} · ${a.run_state_label || ""}` +
+                (a.battery_level != null ? `  ${a.battery_level.toFixed(1)}%` : ""));
+            const p = pickPointUnderMouse(sx, sy);
+            if (p) return showTooltip(sx, sy,
+                `${p.name}  <span class="muted">${p.className}</span>`);
+            hideTooltip();
+        }
+        function showTooltip(x, y, html) {
+            tooltip.innerHTML = html;
+            tooltip.style.display = "";
+            tooltip.style.left = x + "px";
+            tooltip.style.top  = y + "px";
+        }
+        function hideTooltip() { tooltip.style.display = "none"; }
+
+        /* ============================================================
+           侧栏
+           ============================================================ */
+        function renderSidebar() {
+            const sb = document.getElementById("sidebar");
+            const a = agvs.find(x => x.uuid === selectedAgvUuid);
+            if (!a) {
+                sb.innerHTML = `<div class="empty">点击 AGV 查看详情</div>`;
+                return;
+            }
+            const t = tasksByAgv.get(a.uuid);
+            const st = STATE_BY_KEY[pickAgvState(a, t)];
+            const rows = [];
+            rows.push(["状态", `<span class="state-badge" style="background:${st.color}">${st.label}</span>` +
+                `  <span class="muted">${a.run_state_label || ""}</span>`]);
+            rows.push(["名称", App.escapeHtml(a.name)]);
+            rows.push(["UUID", `<code>${App.escapeHtml(a.uuid)}</code>`]);
+            rows.push(["IP", App.escapeHtml(a.ip)]);
+            rows.push(["电量", a.battery_level != null ? `${a.battery_level.toFixed(1)}%` : "-"]);
+            rows.push(["位姿", a.x != null ? `x=${a.x.toFixed(2)}  y=${a.y.toFixed(2)}` : "-"]);
+            rows.push(["当前站点", a.current_station || "-"]);
+            if (t) {
+                rows.push(["任务 ID", `#${t.id}`]);
+                rows.push(["业务", App.escapeHtml(t.business_type_label || "-")]);
+                rows.push(["目标点", App.escapeHtml(t.target_point || "-")]);
+                rows.push(["呼叫点", App.escapeHtml(t.call_point_name || "-")]);
+                rows.push(["零件", App.escapeHtml(t.part_name || "-")]);
+                rows.push(["托盘类型", App.escapeHtml(t.pallet_type_name || "-")]);
+                rows.push(["当前步骤", `#${t.current_step_no ?? "-"}`]);
+            } else {
+                rows.push(["当前任务", "(无)"]);
+            }
+            sb.innerHTML = `<h3>AGV ${App.escapeHtml(a.name)}</h3>
+                <div class="kv">
+                ${rows.map(([k,v]) => `<div class="k">${k}</div><div class="v">${v}</div>`).join("")}
+                </div>`;
+        }
+
+        /* ============================================================
+           地图管理:list/upload/activate/delete
+           ============================================================ */
+        async function loadMapList() {
+            const list = await api("GET", "/api/v1/maps");
+            const sel = document.getElementById("mapSelect");
+            const activeMap = list.find(m => m.is_active);
+            sel.innerHTML = list.length
+                ? list.map(m => `<option value="${m.uuid}" ${m.is_active ? "selected":""}>${App.escapeHtml(m.name)} ${m.is_active ? "· 活跃":""}</option>`).join("")
+                : `<option value="">(还没有地图,请上传 .smap)</option>`;
+            if (activeMap) await selectMap(activeMap.uuid);
+            else if (list.length) await selectMap(list[0].uuid);
+            else { currentMap = null; geometry = null; updateStat(); draw(); }
+        }
+
+        async function selectMap(uuid) {
+            if (!uuid) return;
+            const [m, g] = await Promise.all([
+                api("GET", `/api/v1/maps/${uuid}`),
+                api("GET", `/api/v1/maps/${uuid}/geometry`),
+            ]);
+            currentMap = m; geometry = g;
+            fitToBounds(g.header.minPos.x, g.header.minPos.y, g.header.maxPos.x, g.header.maxPos.y);
+            updateStat();
+            draw();
+        }
+
+        function updateStat() {
+            const el = document.getElementById("mapStat");
+            if (!currentMap || !geometry) {
+                el.textContent = "";
+                return;
+            }
+            const s = geometry.stats;
+            el.textContent =
+                `站点 ${s.points}  ·  线段 ${s.curves} (双向对 ${s.bidir_pairs}, 单向 ${s.unidir})  ·  ` +
+                `范围 x[${geometry.header.minPos.x.toFixed(1)}, ${geometry.header.maxPos.x.toFixed(1)}] ` +
+                `y[${geometry.header.minPos.y.toFixed(1)}, ${geometry.header.maxPos.y.toFixed(1)}]  ·  ` +
+                `分辨率 ${geometry.header.resolution}m`;
+        }
+
+        document.getElementById("mapSelect").addEventListener("change", e => {
+            if (e.target.value) selectMap(e.target.value);
+        });
+
+        document.getElementById("btnUpload").onclick = () => document.getElementById("fileInput").click();
+        document.getElementById("fileInput").addEventListener("change", async e => {
+            const file = e.target.files[0]; if (!file) return;
+            const form = new FormData();
+            form.append("file", file);
+            form.append("name", file.name.replace(/\.smap$/i, ""));
+            const token = localStorage.getItem("token");
+            const resp = await fetch("/api/v1/maps/upload", {
+                method: "POST",
+                headers: { "Authorization": "Bearer " + token },
+                body: form,
+            });
+            e.target.value = "";
+            if (!resp.ok) {
+                const msg = await resp.text();
+                alert("上传失败: " + msg);
+                return;
+            }
+            await loadMapList();
+        });
+
+        document.getElementById("btnActivate").onclick = async () => {
+            const uuid = document.getElementById("mapSelect").value;
+            if (!uuid) return;
+            await api("POST", `/api/v1/maps/${uuid}/activate`);
+            await loadMapList();
+        };
+
+        document.getElementById("btnDelete").onclick = async () => {
+            const uuid = document.getElementById("mapSelect").value;
+            if (!uuid) return;
+            if (!confirm("确认删除该地图?文件也会被移除。")) return;
+            await api("DELETE", `/api/v1/maps/${uuid}`);
+            await loadMapList();
+        };
+
+        /* ============================================================
+           AGV 实时状态轮询
+           ============================================================ */
+        async function refreshAgvs() {
+            try {
+                const list = await api("GET", "/api/v1/agvs");
+                agvs = list;
+                // 拉 INIT/RUNNING/PAUSED 任务(状态枚举 0/1/2),供侧栏/状态推导
+                const tasks = await api("GET", "/api/v1/tasks?status=0&status=1&status=2&limit=100")
+                    .catch(() => []);
+                tasksByAgv = new Map();
+                for (const t of tasks || []) if (t.agv_uuid) tasksByAgv.set(t.agv_uuid, t);
+                renderSidebar();
+                draw();
+            } catch (e) {
+                console.warn("刷新 AGV 失败:", e);
+            }
+        }
+        setInterval(refreshAgvs, 2000);
+
+        /* ============================================================
+           启动
+           ============================================================ */
+        (async function boot() {
+            resizeCanvas();
+            await loadMapList();
+            await refreshAgvs();
+        })();
+    </script>
+</body>
+</html>

@@ -20,6 +20,7 @@ TORTOISE_ORM: dict = {
                 "app.models.material",
                 "app.models.facility",
                 "app.models.inventory",
+                "app.models.map",
                 "aerich.models",
             ],
             "default_connection": "default",
